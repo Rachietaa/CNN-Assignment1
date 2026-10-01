@@ -1,0 +1,25 @@
+# Step 2b control — Step 2a (no augmentation) trained for 60 epochs, to separate the effect of augmentation from longer training.
+name: step2a_cosine_60ep
+seed: 0
+
+data:
+  root: data
+  val_fraction: 0.20
+  img_size: 64
+  grayscale: true
+  mean: [0.5]
+  std: [0.5]
+  num_workers: 2
+
+model:
+  name: scenecnn
+  in_channels: 1
+  widths: [32, 64, 128, 256]
+  dropout: 0.3
+
+train:
+  optimizer: adam
+  lr: 0.002
+  batch_size: 64
+  epochs: 60
+  scheduler: cosine
