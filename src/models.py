@@ -91,10 +91,42 @@ class PretrainedResNet18(nn.Module):
         return self.backbone(x)
 
 
+class PretrainedConvNeXtTiny(nn.Module):
+    """ConvNeXt-Tiny (28M params), a modern pure CNN; final layer replaced for 16 classes.
+
+    version='v1': torchvision ConvNeXt_Tiny_Weights.IMAGENET1K_V1 — supervised training on ImageNet-1k.
+    version='v2': timm 'convnextv2_tiny.fcmae_ft_in1k' — self-supervised FCMAE (fully convolutional masked
+                  autoencoder) pretraining on ImageNet-1k, then supervised fine-tuning on ImageNet-1k.
+    Both use stochastic depth (drop_path) so that only the pretraining differs between them.
+    """
+    def __init__(self, num_classes=16, version='v1', drop_path=0.1):
+        super().__init__()
+        self.version = version
+        if version == 'v1':
+            self.net = models.convnext_tiny(weights=models.ConvNeXt_Tiny_Weights.IMAGENET1K_V1,
+                                            stochastic_depth_prob=drop_path)
+            self.net.classifier[2] = nn.Linear(self.net.classifier[2].in_features, num_classes)
+            self._head = self.net.classifier[2]
+        elif version == 'v2':
+            import timm
+            self.net = timm.create_model('convnextv2_tiny.fcmae_ft_in1k', pretrained=True,
+                                         num_classes=num_classes, drop_path_rate=drop_path)
+            self._head = self.net.get_classifier()
+        else:
+            raise ValueError(f'Unknown ConvNeXt version: {version}')
+
+    def head_parameters(self):
+        return self._head.parameters()
+
+    def forward(self, x):
+        return self.net(x)
+
+
 MODELS = {
     'tnet': TNet,
     'scenecnn': SceneCNN,
     'resnet18': PretrainedResNet18,
+    'convnext_tiny': PretrainedConvNeXtTiny,
 }
 
 
