@@ -13,10 +13,29 @@ def build_transform(cfg, train):
     later experiments); `train=False` returns the deterministic eval transform.
     """
     size = cfg['img_size']
+    aug = (cfg.get('augment') or {}) if train else {}  # never augment val/test
     t = []
     if cfg.get('grayscale', False):
         t.append(transforms.Grayscale(num_output_channels=1))
-    t.append(transforms.Resize((size, size)))
+
+    if aug.get('rotation'):
+        # Rotate at full resolution with bilinear interpolation (rotating after the 64px resize with
+        # the default nearest interpolation produced jagged staircase artifacts). Corners are filled
+        # with mid-gray rather than black, and the crop below usually removes most of them.
+        t.append(transforms.RandomRotation(degrees=aug['rotation'],
+                                           interpolation=transforms.InterpolationMode.BILINEAR,
+                                           fill=128))
+    if 'random_resized_crop' in aug:
+        # Crop a random region covering `scale` of the image area, then resize to size×size.
+        t.append(transforms.RandomResizedCrop(size, scale=tuple(aug['random_resized_crop'])))
+    else:
+        t.append(transforms.Resize((size, size)))
+    if aug.get('hflip'):
+        t.append(transforms.RandomHorizontalFlip(p=aug['hflip']))
+    if aug.get('brightness') or aug.get('contrast'):
+        t.append(transforms.ColorJitter(brightness=aug.get('brightness', 0),
+                                        contrast=aug.get('contrast', 0)))
+
     t.append(transforms.ToTensor())
     t.append(transforms.Normalize(mean=cfg['mean'], std=cfg['std']))
     return transforms.Compose(t)
