@@ -1,0 +1,34 @@
+# Step 5a — ConvNeXt-Tiny (torchvision, supervised ImageNet-1k), full fine-tune. Same recipe as Step 4b; only the model changes.
+# Pretrained: torchvision ResNet18_Weights.IMAGENET1K_V1 (supervised, ImageNet-1k).
+name: step5a_convnext_tiny
+seed: 0
+
+data:
+  root: data
+  val_fraction: 0.20
+  img_size: 224                       # ImageNet training resolution
+  gray3: true                         # gray copied into 3 channels (no Flower color shortcut, see Step 3a)
+  mean: [0.485, 0.456, 0.406]         # ImageNet normalization
+  std: [0.229, 0.224, 0.225]
+  num_workers: 4
+  augment:                            # same augmentation as Step 2b-ii
+    rotation: 10
+    random_resized_crop: [0.7, 1.0]
+    hflip: 0.5
+    brightness: 0.2
+    contrast: 0.2
+
+model:
+  name: convnext_tiny
+  version: v1                         # supervised ImageNet-1k weights (torchvision IMAGENET1K_V1)
+  drop_path: 0.1
+
+train:
+  optimizer: adamw
+  lr: 0.001                           # new final layer
+  backbone_lr: 0.0001                 # pretrained layers: 10× smaller
+  weight_decay: 0.05
+  batch_size: 64
+  epochs: 30
+  scheduler: cosine
+  warmup_epochs: 2
