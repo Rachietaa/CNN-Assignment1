@@ -1,0 +1,9 @@
+{
+  "name": "step4a_resnet18_frozen_s1",
+  "best_val_acc": 0.9104166666666667,
+  "best_epoch": 19,
+  "params": 8208,
+  "train_seconds": 111.1,
+  "device": "mps",
+  "torch": "2.14.1"
+}

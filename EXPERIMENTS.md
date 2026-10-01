@@ -28,6 +28,8 @@ The test set is only evaluated once, on the final selected model.
 | 3a | RGB input | `configs/step3a_rgb.yaml` | 3-channel color input instead of grayscale; 3 seeds | Does color help? Only Flower is in color | 84.2% ± 1.9 | +1.4 but noisy. **Shortcut confirmed:** with color stripped at eval time, Flower drops 89% → 22% (gray model: 82%). The model learned "color = Flower". |
 | 3b | 128×128 input | `configs/step3b_res128.yaml` | Resolution 64 → 128, same network; 3 seeds | Finer detail for object-defined scenes | **84.7% ± 0.7** | **+1.9**, every seed above every 64px seed. Biggest gains: Flower +13, Kitchen +8, OpenCountry +6. Costs 3.6× training time. |
 | 3c | 2× wider network | `configs/step3c_wide.yaml` | Channels 64-128-256-512 (4.7M params, 4×); 3 seeds | Is model capacity the limit? | 83.0% ± 0.3 | **No gain** (+0.2) for 4× parameters and 2.7× time. Capacity isn't the bottleneck; the amount of data is. |
+| 4a | Pretrained ResNet-18, frozen | `configs/step4a_resnet18_frozen.yaml` | ImageNet ResNet-18, only new final layer trained (8,208 weights); 224px, gray→3ch, AdamW; 3 seeds | How good are ImageNet features for scenes as-is? | 91.7% ± 0.6 | **+7.0 pts over the best from-scratch model** while training 0.07% of the weights. Flower 100% without color. |
+| 4b | Pretrained ResNet-18, full fine-tune | `configs/step4b_resnet18_finetune.yaml` | All 11.2M weights trained; backbone LR 1e-4, head LR 1e-3, 2-epoch warm-up; 3 seeds | Does adapting the features add more? | **94.4% ± 0.2** | **+2.7 pts over frozen**, most stable result so far. Remaining errors: Bedroom↔LivingRoom, Coast↔OpenCountry, InsideCity↔Industrial/Street. |
 
 ---
 
@@ -843,3 +845,129 @@ need richer visual knowledge than 1,920 images provide.
 
 The obvious way to get that knowledge is a network **pretrained on ImageNet** (1.28M images), which already
 knows what beds, sofas, shelves and buildings look like. That is Step 4.
+
+---
+
+## Step 4 — Pretrained ResNet-18 (ImageNet): frozen vs. fully fine-tuned
+
+**Question.** Step 3 concluded that the from-scratch CNN is limited by the amount of data, not by its
+capacity. A network pretrained on ImageNet has already learned general visual features (edges, textures,
+object parts, furniture, buildings) from 1.28M images. (a) How well do those features work for our 16
+scene classes without changing them? (b) How much more do we gain by adapting them to our data?
+
+### What is pretrained (as required by the assignment)
+
+| | |
+|---|---|
+| Architecture | ResNet-18 (torchvision), a CNN with 11.2M parameters |
+| Pretrained weights | `torchvision.models.ResNet18_Weights.IMAGENET1K_V1`, supervised classification training on **ImageNet-1k** (1.28M images, 1,000 classes) |
+| What we replace | The final fully connected layer (512 → 1000) is replaced by a new, randomly initialized 512 → 16 layer |
+| 4a: what is trained | **Only the new final layer** (8,208 parameters). All pretrained layers are frozen, and their BatchNorm layers are kept in eval mode so the ImageNet statistics are not changed |
+| 4b: what is trained | **All 11.2M parameters** (pretrained layers + new final layer) |
+
+Code: `PretrainedResNet18` in [src/models.py](src/models.py).
+
+### Setup and what changed from the from-scratch runs
+
+| Setting | From scratch (2b-ii) | Step 4a / 4b | Why |
+|---|---|---|---|
+| Input size | 64×64 | **224×224** | ImageNet models are trained at 224px; Step 3b also showed resolution helps |
+| Input channels | 1 (gray) | **gray copied into 3 channels** (`gray3`) | Pretrained model expects 3 channels. Gray avoids the Flower color shortcut found in Step 3a |
+| Normalization | mean 0.5 / std 0.5 | **ImageNet mean/std** | The pretrained weights expect inputs scaled the same way as during their training |
+| Augmentation | rotation ±10°, crop 70–100%, h-flip, brightness/contrast | **same** | Kept fixed so the comparison is about the model |
+| Optimizer | Adam, LR 0.002 | **AdamW**, weight decay 0.01 (4a) / 0.05 (4b) | Decoupled weight decay, standard for fine-tuning |
+| Learning rate | one LR | 4a: 0.001 (final layer). 4b: **0.001 final layer, 0.0001 pretrained layers** | The new layer starts random and must learn fast; pretrained layers should only be nudged |
+| Schedule | cosine | **1–2 epoch linear warm-up**, then cosine | Early gradients come from a random final layer; warm-up keeps them from damaging the pretrained weights |
+| Epochs | 60 | **30** | Pretrained models converge much faster |
+
+Before training, I checked that the code does what the table says: 4a has 8,208 trainable parameters out
+of 11.2M and all its BatchNorm layers stay in eval mode; 4b has two optimizer groups (8,208 head
+parameters at 1e-3, 11.18M backbone parameters at 1e-4); the LR ramps up during warm-up and then decays.
+
+**Reproduce** (each also with `--seed 1` and `--seed 2`):
+```bash
+python train.py --config configs/step4a_resnet18_frozen.yaml
+python train.py --config configs/step4b_resnet18_finetune.yaml
+```
+
+### Result
+
+| Run | Trained params | Best val (mean ± std) | Per seed | Last-5 mean | Final train acc | Lowest val loss | Train time |
+|---|---:|---:|---|---:|---:|---:|---:|
+| 3b: best from scratch (128px) | 1.18M | 84.7% ± 0.7 | 85.4 / 84.0 / 84.6 | 83.5% | 94.4% | 0.471 | 320 s |
+| **4a: ResNet-18 frozen** | **8,208** | **91.7% ± 0.6** | 91.7 / 91.0 / 92.3 | 91.3% | 93.9% | 0.271 | 110 s |
+| **4b: ResNet-18 fine-tuned** | 11.18M | **94.4% ± 0.2** | 94.6 / 94.4 / 94.2 | 93.7% | 99.9% | **0.238** | 346 s* |
+
+\*Seed 0 timing. Seeds 1 and 2 took ~480 s because the laptop lid was closed during those runs and the
+machine throttled; accuracy is unaffected, only wall-clock time.
+
+**Learning curves (seed 0, train acc / val acc):**
+
+| Epoch | 1 | 2 | 3 | 5 | 10 | 15 | 20 | 30 |
+|---|---|---|---|---|---|---|---|---|
+| 4a frozen | 20 / 58 | 69 / 81 | 83 / 86 | 89 / 89 | 92 / 89 | 93 / 91 | 93 / 90 | 94 / 91 |
+| 4b fine-tuned | 29 / 69 | 83 / 86 | 92 / 90 | 97 / 92 | 99 / 93 | 100 / 93 | 100 / 94 | 100 / 94 |
+
+![Step 4b curves](runs/step4b_resnet18_finetune/curves.png)
+
+**Per-class validation accuracy (mean of 3 seeds):**
+
+| Class | 3b from scratch | 4a frozen | 4b fine-tuned |
+|---|---:|---:|---:|
+| InsideCity | 62.2% | 83.3% | 83.3% |
+| Bedroom | 69.2% | 87.2% | 85.5% |
+| LivingRoom | 65.4% | 76.9% | 87.2% |
+| Coast | 82.8% | 87.9% | 89.9% |
+| Store | 84.9% | 90.3% | 90.3% |
+| OpenCountry | 82.1% | 85.7% | 92.9% |
+| Mountain | 92.9% | 96.4% | 95.2% |
+| Highway | 90.5% | 96.4% | 96.4% |
+| Office | 80.6% | 87.5% | 97.2% |
+| Kitchen | 85.6% | 95.6% | 97.8% |
+| Forest | 94.3% | 94.3% | 98.9% |
+| Industrial | 82.8% | 95.4% | 98.9% |
+| Suburb | 98.0% | 97.1% | 99.0% |
+| Flower | 94.6% | 100.0% | 100.0% |
+| Street | 95.8% | 94.8% | 100.0% |
+| TallBuilding | 92.9% | 96.4% | 100.0% |
+
+**Most frequent errors of 4b** (summed over the 3 seeds, 1,440 validation predictions in total):
+
+| True class → predicted | Count |
+|---|---:|
+| Bedroom → LivingRoom | 10 |
+| Coast → OpenCountry | 9 |
+| InsideCity → Industrial | 8 |
+| Bedroom → Kitchen | 7 |
+| InsideCity → Street | 6 |
+| Store → Kitchen | 6 |
+| OpenCountry → Coast | 5 |
+| LivingRoom → Bedroom | 4 |
+
+### Observations
+
+1. **Pretraining is the biggest single improvement since Step 1.** Just training a new final layer on top
+   of frozen ImageNet features gives 91.7%, 7 points above the best from-scratch model, while training
+   0.07% as many weights and converging in a few epochs (89% val after epoch 5). This confirms the Step 3
+   conclusion: the from-scratch model was short on visual knowledge, not on capacity.
+2. **Fine-tuning all layers adds another +2.7 points (94.4%)** and is the most stable result so far
+   (± 0.2 across seeds). The gains are largest where the scene categories differ from ImageNet's
+   object categories: Office +9.7, OpenCountry +7.2, LivingRoom +10.3, Street +5.2. Adapting the features
+   lets the network weight scene layout, not only object identity.
+3. **The frozen model barely overfits, the fine-tuned one does** (train 93.9% vs 99.9%), but the
+   fine-tuned one still generalizes better (val loss 0.24 vs 0.27). With good starting features,
+   fitting the training set closely is no longer harmful the way it was from scratch.
+4. **Flower reaches 100% with gray input.** ImageNet features recognize petal shapes and textures, so the
+   color shortcut from Step 3a is unnecessary; the decision to use gray costs nothing here.
+5. **The remaining errors are the semantically hard pairs.** Bedroom/LivingRoom/Kitchen (similar indoor
+   furniture), Coast/OpenCountry (flat horizon scenes), and InsideCity/Industrial/Street (dense urban
+   scenes). These pairs are hard for people at low resolution in grayscale too. InsideCity (83%) and
+   Bedroom (86%) are now the weakest classes.
+
+### What this suggests for the next step
+
+- **Step 5: a stronger pretrained CNN.** ResNet-18 (2015) is small; ConvNeXt (2022) is a modern CNN with
+  much better ImageNet features. Also compare ConvNeXt V2, whose weights were pretrained with FCMAE
+  (masked-autoencoder pretraining for CNNs) before supervised fine-tuning.
+- **Fine-tuning tricks to target the remaining confusions:** label smoothing (less over-confidence on
+  similar classes), Mixup/CutMix, and test-time horizontal-flip averaging.

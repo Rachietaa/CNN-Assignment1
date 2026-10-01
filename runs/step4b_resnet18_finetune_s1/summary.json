@@ -1,0 +1,9 @@
+{
+  "name": "step4b_resnet18_finetune_s1",
+  "best_val_acc": 0.94375,
+  "best_epoch": 12,
+  "params": 11184720,
+  "train_seconds": 478.0,
+  "device": "mps",
+  "torch": "2.14.1"
+}

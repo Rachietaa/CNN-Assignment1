@@ -45,6 +45,17 @@ using the same split as the course starter notebook. The checkpoint with the bes
 accuracy is kept. All experiment choices are made using validation accuracy only; the test
 set is used once, for the final model.
 
+## Pretrained weights
+
+From Step 4 onward, models start from ImageNet-pretrained weights:
+
+| Model | Weights | Pretraining data | Fine-tuned parameters |
+|---|---|---|---|
+| ResNet-18 (Step 4a) | `torchvision` `ResNet18_Weights.IMAGENET1K_V1` | ImageNet-1k, supervised | new final layer only (8,208) |
+| ResNet-18 (Step 4b) | same | same | all layers (11.2M) |
+
+Weights are downloaded automatically by torchvision on first use.
+
 ## Layout
 
 ```text
