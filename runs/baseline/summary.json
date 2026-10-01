@@ -1,0 +1,9 @@
+{
+  "name": "baseline",
+  "best_val_acc": 0.48125,
+  "best_epoch": 10,
+  "params": 57776,
+  "train_seconds": 9.9,
+  "device": "mps",
+  "torch": "2.14.1"
+}
