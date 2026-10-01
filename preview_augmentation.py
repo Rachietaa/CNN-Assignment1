@@ -40,7 +40,7 @@ def main():
         views = [plain(image)] + [augmented(image) for _ in range(args.n_augments)]
         for col, view in enumerate(views):
             ax = axes[row, col]
-            ax.imshow((view * std + mean).permute(1, 2, 0).squeeze().clamp(0, 1), cmap='gray')
+            ax.imshow((view * std + mean).permute(1, 2, 0).squeeze().clamp(0, 1), cmap='gray', vmin=0, vmax=1)
             ax.axis('off')
             if col == 0:
                 ax.set_title(f'{dataset.classes[label]}\n(original)', fontsize=8)
