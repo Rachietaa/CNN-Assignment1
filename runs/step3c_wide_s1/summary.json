@@ -1,0 +1,9 @@
+{
+  "name": "step3c_wide_s1",
+  "best_val_acc": 0.8333333333333334,
+  "best_epoch": 55,
+  "params": 4694352,
+  "train_seconds": 239.2,
+  "device": "mps",
+  "torch": "2.14.1"
+}

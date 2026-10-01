@@ -1,0 +1,9 @@
+{
+  "name": "step3b_res128_s1",
+  "best_val_acc": 0.8395833333333333,
+  "best_epoch": 44,
+  "params": 1176752,
+  "train_seconds": 320.2,
+  "device": "mps",
+  "torch": "2.14.1"
+}

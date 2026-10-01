@@ -25,6 +25,9 @@ The test set is only evaluated once, on the final selected model.
 | 2c | + Cutout | `configs/step2c_cutout.yaml` | Random Erasing (p 0.5, 2–20% of area) on top of 2b-ii; **3 seeds each** | Force the model to use the whole scene, not one object | 83.1% ± 1.0 (3 seeds) | **No real effect**: 2b-ii is 82.8% ± 0.3. Last-5 means identical (82.1 vs 82.2%). Single seeds pointed both ways (−0.4 to +1.7 pts). Lower train acc and val loss, so it regularizes, but accuracy doesn't move. |
 | 2d-i | Large rotation (planned failure) | `configs/step2d_rot45.yaml` | Rotation ±45° instead of ±10°; 3 seeds | Scenes have a fixed "up"; should hurt | 78.1% ± 1.7 | **−4.7 pts.** Hurts most on man-made scenes with straight vertical/horizontal lines (Industrial −15, InsideCity −13, Store −12). Flower *gains* +10. |
 | 2d-ii | Vertical flip (planned failure) | `configs/step2d_vflip.yaml` | + vertical flip p 0.5; 3 seeds | Upside-down scenes never occur at test time | 80.3% ± 0.6 | **−2.5 pts.** Hurts classes defined by sky-above-ground layout (TallBuilding −8, Coast −8). Line-based classes unaffected. |
+| 3a | RGB input | `configs/step3a_rgb.yaml` | 3-channel color input instead of grayscale; 3 seeds | Does color help? Only Flower is in color | 84.2% ± 1.9 | +1.4 but noisy. **Shortcut confirmed:** with color stripped at eval time, Flower drops 89% → 22% (gray model: 82%). The model learned "color = Flower". |
+| 3b | 128×128 input | `configs/step3b_res128.yaml` | Resolution 64 → 128, same network; 3 seeds | Finer detail for object-defined scenes | **84.7% ± 0.7** | **+1.9**, every seed above every 64px seed. Biggest gains: Flower +13, Kitchen +8, OpenCountry +6. Costs 3.6× training time. |
+| 3c | 2× wider network | `configs/step3c_wide.yaml` | Channels 64-128-256-512 (4.7M params, 4×); 3 seeds | Is model capacity the limit? | 83.0% ± 0.3 | **No gain** (+0.2) for 4× parameters and 2.7× time. Capacity isn't the bottleneck; the amount of data is. |
 
 ---
 
@@ -708,3 +711,135 @@ fits the training set worse (train accuracy 90–92% vs 98%) and is less confide
 
 Keep **±10° rotation and horizontal flip only** (Step 2b-ii). Left/right mirroring preserves everything
 that is true about a scene photo; up/down and large tilts do not.
+
+---
+
+## Step 3 — Color, resolution and capacity (from scratch)
+
+Three questions from the assignment, each tested as **one change** against the Step 2b-ii reference
+(gray, 64×64, `SceneCNN` 1.2M params, augmentation, cosine LR, 60 epochs), with 3 seeds each and the same
+fixed validation split. All runs on Apple M-series GPU (MPS); the machine was kept awake, so timings are
+comparable.
+
+**Reproduce** (each also with `--seed 1` and `--seed 2`):
+```bash
+python train.py --config configs/step3a_rgb.yaml
+python evaluate.py --checkpoint runs/step3a_rgb/best.pt --strip-color   # color-removed check
+python train.py --config configs/step3b_res128.yaml
+python train.py --config configs/step3c_wide.yaml
+```
+
+### Summary
+
+| Run | Params | Best val (mean ± std) | Per seed | Last-5 mean | Final train acc | Lowest val loss | Train time |
+|---|---:|---:|---|---:|---:|---:|---:|
+| 2b-ii reference (gray, 64px) | 1.18M | 82.8% ± 0.3 | 82.7 / 83.1 / 82.5 | 82.2% | 98.1% | 0.561 | 89 s |
+| **3a** RGB input | 1.18M | 84.2% ± 1.9 | 85.2 / 82.1 / 85.4 | 83.4% | 97.6% | 0.556 | 90 s |
+| **3b** 128×128 input | 1.18M | **84.7% ± 0.7** | 85.4 / 84.0 / 84.6 | 83.5% | 94.4% | **0.471** | 320 s |
+| **3c** 2× wider | 4.69M | 83.0% ± 0.3 | 82.7 / 83.3 / 82.9 | 82.5% | 98.4% | 0.573 | 238 s |
+
+**Per-class validation accuracy (mean of 3 seeds):**
+
+| Class | 2b-ii gray | 3a RGB | 3a RGB, color stripped | 3b 128px | 3c wide |
+|---|---:|---:|---:|---:|---:|
+| Bedroom | 74.4% | 69.2% | 69.2% | 69.2% (−5.1) | 70.9% |
+| Coast | 87.9% | 86.9% | 86.9% | 82.8% (−5.1) | 90.9% |
+| Office | 83.3% | 83.3% | 83.3% | 80.6% (−2.8) | 79.2% |
+| LivingRoom | 67.9% | 80.8% | 80.8% | 65.4% (−2.6) | 74.4% |
+| InsideCity | 64.4% | 70.0% | 70.0% | 62.2% (−2.2) | 65.6% |
+| Forest | 94.3% | 94.3% | 94.3% | 94.3% (0.0) | 92.0% |
+| TallBuilding | 91.7% | 92.9% | 92.9% | 92.9% (+1.2) | 91.7% |
+| Mountain | 91.7% | 88.1% | 88.1% | 92.9% (+1.2) | 88.1% |
+| Suburb | 95.1% | 92.2% | 92.2% | 98.0% (+2.9) | 96.1% |
+| Store | 81.7% | 86.0% | 86.0% | 84.9% (+3.2) | 86.0% |
+| Industrial | 79.3% | 80.5% | 80.5% | 82.8% (+3.4) | 74.7% |
+| Highway | 85.7% | 85.7% | 85.7% | 90.5% (+4.8) | 83.3% |
+| Street | 90.6% | 92.7% | 92.7% | 95.8% (+5.2) | 90.6% |
+| OpenCountry | 76.2% | 70.2% | 70.2% | 82.1% (+6.0) | 77.4% |
+| Kitchen | 77.8% | 87.8% | 87.8% | 85.6% (+7.8) | 82.2% |
+| **Flower** | 81.7% | **89.2%** | **21.5%** | 94.6% (+12.9) | 83.9% |
+
+### 3a — RGB input: color helps Flower only, through a shortcut
+
+**Setup.** Grayscale conversion removed; the network takes 3 channels. In this dataset only Flower images
+are actually in color (see Dataset notes); every other image is gray, which the image loader turns into 3
+identical channels. So "RGB input" changes the input of exactly one class. Verified before training: in a
+sample of the training set, every Flower image had differing channels and no other image did.
+
+**Shortcut test.** If the network has simply learned "colorful image → Flower", then removing the color
+should break Flower and nothing else. `evaluate.py --strip-color` converts every validation image to
+gray (kept as 3 channels) and re-scores the same RGB checkpoints.
+
+| Flower accuracy | Seed 0 | Seed 1 | Seed 2 | Mean |
+|---|---:|---:|---:|---:|
+| Gray model (2b-ii), gray input | | | | 81.7% |
+| RGB model, color input | 93.5% | 83.9% | 90.3% | 89.2% |
+| **RGB model, color stripped** | 29.0% | 16.1% | 19.4% | **21.5%** |
+
+Overall accuracy of the RGB model with color stripped: 79.9% (vs 84.2% with color). All other 15 classes
+are unchanged, as expected, because their input is identical with or without stripping.
+
+**What we learned.**
+1. **It is a shortcut.** The RGB model gets Flower right mostly *because the image is colorful*. Shown a
+   gray flower photo it drops to 22%, far below the gray-trained model's 82% on the same images. Given an
+   easy cue, the network stopped learning the petal/texture features that the gray model was forced to
+   learn.
+2. **The overall +1.4 points is mostly noise.** It has the largest spread of any run (82.1–85.4%). The
+   non-Flower classes average 83.9% vs 82.9% for the gray model, but their input is identical in both
+   setups, so this 1-point difference reflects training randomness, not color.
+3. **The shortcut "works" on this test set,** because the test Flower images are also the only color
+   images (25 of 25). But it is fragile: any gray flower photo, or a color photo of another class, would
+   expose it. This matters for the pretrained models in Step 4+, which expect 3-channel input. We need to
+   decide whether to feed them the real colors (exploit the dataset quirk) or gray copied into 3 channels
+   (no shortcut).
+
+### 3b — 128×128 resolution: real but expensive gain
+
+**Setup.** Input resized to 128×128 instead of 64×64. Same network: the four pooling stages now end at
+8×8 instead of 4×4, and global average pooling handles the larger map. Parameters unchanged.
+
+**What we learned.**
+1. **Resolution helps: +1.9 points**, and every 128px seed (84.0–85.4%) beats every 64px seed
+   (82.5–83.1%). Validation loss is the best of all runs (0.47), and train accuracy is lower (94.4%), so the
+   model also overfits less.
+2. **The gains are in classes defined by fine detail**: Flower +12.9 (petal texture), Kitchen +7.8
+   (appliances, cabinets), OpenCountry +6.0, Street +5.2, Highway +4.8 (lane markings, small vehicles).
+3. **It did not fix the indoor confusions I expected it to fix.** Bedroom (−5.1) and LivingRoom (−2.6) did
+   not improve; their errors come from similar furniture layouts, not from missing pixels. One likely
+   limit: with the same 4 blocks, each unit now sees a smaller fraction of the 128px image, so the network
+   gained detail but lost some global layout context.
+4. **Cost: 3.6× training time** (320 s vs 89 s) for +1.9 points. Worth it if accuracy is the goal; for
+   the accuracy–efficiency tradeoff, 64px is the better operating point.
+
+### 3c — 2× wider network: capacity is not the bottleneck
+
+**Setup.** Channel widths doubled (32-64-128-256 → 64-128-256-512): 4.0× the parameters (4.69M vs 1.18M)
+and ~2.7× the training time. Everything else unchanged.
+
+**What we learned.**
+1. **No gain: 83.0% ± 0.3 vs 82.8% ± 0.3.** Four times the parameters buys nothing measurable.
+2. **The bigger model fits the training set just as well (98.4%) but generalizes no better.** The limit is
+   not what the network *can* represent, it is what 1,920 training images can *teach* it. More capacity
+   only adds more ways to memorize.
+3. This directly answers the assignment's question "Can a smaller model perform almost as well as a much
+   larger model?" — here the 1.2M-parameter model performs **as well as** the 4.7M one.
+
+### Conclusion of the from-scratch experiments
+
+| Lever | Effect |
+|---|---|
+| Depth (Step 1) | +22.7 pts |
+| Cosine LR (Step 2a) | +6.5 pts, much more stable |
+| Augmentation + longer training (Step 2b) | +5.4 pts |
+| Cutout (2c), wider network (3c) | none |
+| Resolution 64 → 128 (3b) | +1.9 pts at 3.6× cost |
+| Color (3a) | Flower-only shortcut |
+| Breaking orientation (2d) | −2.5 to −4.7 pts |
+
+Training from scratch has hit a ceiling around **83–85%**. The evidence points at one cause: **not
+enough data**. More capacity doesn't help (3c), stronger regularization doesn't help (2c), and the
+remaining errors are between visually similar classes (Bedroom/LivingRoom, InsideCity/Street/Store) that
+need richer visual knowledge than 1,920 images provide.
+
+The obvious way to get that knowledge is a network **pretrained on ImageNet** (1.28M images), which already
+knows what beds, sofas, shelves and buildings look like. That is Step 4.

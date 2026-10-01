@@ -1,0 +1,9 @@
+{
+  "name": "step3a_rgb_s1",
+  "best_val_acc": 0.8208333333333333,
+  "best_epoch": 49,
+  "params": 1177328,
+  "train_seconds": 90.9,
+  "device": "mps",
+  "torch": "2.14.1"
+}
