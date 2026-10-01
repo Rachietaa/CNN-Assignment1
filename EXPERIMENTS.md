@@ -23,6 +23,8 @@ The test set is only evaluated once, on the final selected model.
 | 2b ctrl | Longer training, no aug | `configs/step2a_cosine_60ep.yaml` | Step 2a with 60 epochs | Control: separate "augmentation" from "more epochs" | 79.0% | Last-5 mean +1.5 pts only. Reaches 100% train acc / loss 0.002 — pure memorization; val loss 0.84. |
 | 2b-ii | + Augmentation, 60 epochs | `configs/step2b_augment_60ep.yaml` | Step 2b-i with 60 epochs | Augmented data needs more epochs to fit | **82.7%** | +5.4 pts vs 2a; +4.1 pts last-5 mean vs the 60-epoch control. Val loss 0.55 (best so far). Augmentation and longer training only help together. |
 | 2c | + Cutout | `configs/step2c_cutout.yaml` | Random Erasing (p 0.5, 2–20% of area) on top of 2b-ii; **3 seeds each** | Force the model to use the whole scene, not one object | 83.1% ± 1.0 (3 seeds) | **No real effect**: 2b-ii is 82.8% ± 0.3. Last-5 means identical (82.1 vs 82.2%). Single seeds pointed both ways (−0.4 to +1.7 pts). Lower train acc and val loss, so it regularizes, but accuracy doesn't move. |
+| 2d-i | Large rotation (planned failure) | `configs/step2d_rot45.yaml` | Rotation ±45° instead of ±10°; 3 seeds | Scenes have a fixed "up"; should hurt | 78.1% ± 1.7 | **−4.7 pts.** Hurts most on man-made scenes with straight vertical/horizontal lines (Industrial −15, InsideCity −13, Store −12). Flower *gains* +10. |
+| 2d-ii | Vertical flip (planned failure) | `configs/step2d_vflip.yaml` | + vertical flip p 0.5; 3 seeds | Upside-down scenes never occur at test time | 80.3% ± 0.6 | **−2.5 pts.** Hurts classes defined by sky-above-ground layout (TallBuilding −8, Coast −8). Line-based classes unaffected. |
 
 ---
 
@@ -591,3 +593,118 @@ smaller fraction of the scene's information and modern fine-tuning recipes commo
 
 The from-scratch CNN has plateaued around **82–83%**. The next experiments test augmentations that
 should *hurt* (Step 2d), and then whether more capacity or resolution helps from scratch (Step 3).
+
+---
+
+## Step 2d — Planned failure: augmentations that break scene orientation
+
+**Question.** The augmentations that worked in Step 2b all preserve a basic fact about photographs of
+scenes: the camera is roughly upright, so the sky is at the top, the floor at the bottom, and buildings
+are vertical. What happens if augmentation breaks that? Two variants were tested **separately** so the
+cause of any drop is clear:
+
+- **2d-i — large rotation:** ±45° instead of ±10° (`configs/step2d_rot45.yaml`)
+- **2d-ii — vertical flip:** upside-down with probability 0.5, rotation stays ±10° (`configs/step2d_vflip.yaml`)
+
+Everything else equals the Step 2b-ii reference. Each config was run with 3 seeds (same fixed val split).
+
+**Prediction, written before running:** both hurt overall. The damage should be concentrated in outdoor
+classes where "sky above, ground below" defines the scene (Coast, Mountain, OpenCountry, Highway), while
+texture-like classes (Forest, Flower) should barely care about orientation.
+
+**Reproduce.**
+```bash
+python train.py --config configs/step2d_rot45.yaml            # and --seed 1, --seed 2
+python train.py --config configs/step2d_vflip.yaml            # and --seed 1, --seed 2
+```
+
+### Previews
+
+±45° rotation (gray corners come from rotating; the crop removes only part of them at large angles):
+
+![Rotation ±45 preview](runs/step2d_rot45/augment_preview.png)
+
+Vertical flip (about half the images are upside-down):
+
+![Vertical flip preview](runs/step2d_vflip/augment_preview.png)
+
+### Result
+
+| Seed | 2b-ii (reference) | 2d-i: ±45° rotation | 2d-ii: vertical flip |
+|---:|---:|---:|---:|
+| 0 | 82.7% | 79.2% | 80.4% |
+| 1 | 83.1% | 76.0% | 79.6% |
+| 2 | 82.5% | 79.0% | 80.8% |
+| **Best val, mean ± std** | **82.8% ± 0.3** | **78.1% ± 1.7** (−4.7) | **80.3% ± 0.6** (−2.5) |
+| Last-5-epoch mean | 82.2% ± 0.7 | 77.3% ± 1.5 (−4.9) | 79.1% ± 0.1 (−3.1) |
+| Final train acc | 98.1% | 90.1% | 91.7% |
+| Lowest val loss | 0.561 | 0.690 | 0.630 |
+
+Both drops are several times larger than the seed-to-seed spread, and every single seed of both variants
+is below every seed of the reference. These are real effects.
+
+**Per-class validation accuracy, averaged over 3 seeds** (sorted by combined damage):
+
+| Class | 2b-ii | ±45° rotation | Change | Vertical flip | Change |
+|---|---:|---:|---:|---:|---:|
+| TallBuilding | 91.7% | 84.5% | −7.1 | 83.3% | −8.3 |
+| InsideCity | 64.4% | 51.1% | **−13.3** | 63.3% | −1.1 |
+| Coast | 87.9% | 81.8% | −6.1 | 79.8% | −8.1 |
+| Industrial | 79.3% | 64.4% | **−14.9** | 81.6% | +2.3 |
+| Bedroom | 74.4% | 68.4% | −6.0 | 68.4% | −6.0 |
+| Office | 83.3% | 79.2% | −4.2 | 76.4% | −6.9 |
+| Store | 81.7% | 69.9% | **−11.8** | 82.8% | +1.1 |
+| Mountain | 91.7% | 82.1% | −9.5 | 91.7% | 0.0 |
+| Forest | 94.3% | 89.7% | −4.6 | 89.7% | −4.6 |
+| LivingRoom | 67.9% | 64.1% | −3.8 | 62.8% | −5.1 |
+| OpenCountry | 76.2% | 73.8% | −2.4 | 70.2% | −6.0 |
+| Highway | 85.7% | 83.3% | −2.4 | 83.3% | −2.4 |
+| Kitchen | 77.8% | 74.4% | −3.3 | 77.8% | 0.0 |
+| Street | 90.6% | 90.6% | 0.0 | 91.7% | +1.0 |
+| Suburb | 95.1% | 98.0% | +2.9 | 94.1% | −1.0 |
+| Flower | 81.7% | 91.4% | **+9.7** | 86.0% | +4.3 |
+
+### Failure analysis
+
+**What we tried.** Two augmentations that make training images look like photos taken with a tilted or
+upside-down camera.
+
+**Why it might have worked.** More aggressive augmentation means more variety from the same 1,920 images,
+and in Step 2b more variety was exactly what helped. Rotation and flipping are also standard in other
+domains (satellite images, microscopy, textures), where they reliably help.
+
+**What happened.** Both hurt: −4.7 points for ±45° rotation and −2.5 for vertical flips. The model also
+fits the training set worse (train accuracy 90–92% vs 98%) and is less confident on validation images
+(higher val loss).
+
+**What we learned.**
+
+1. **Augmentation must preserve what is true at test time.** Validation and test photos are always
+   upright. Training on tilted/upside-down versions forces the network to spend capacity becoming
+   invariant to orientation, a variation it will never see, while erasing a cue that genuinely separates
+   classes. Satellite and microscope images have no "up", which is why the same augmentation helps there.
+2. **The two augmentations destroy different cues, and the per-class results show which.** My prediction
+   ("outdoor classes suffer") was only partly right:
+   - **Large rotation** hurts most on **man-made scenes defined by straight vertical and horizontal
+     lines**: Industrial −15, InsideCity −13, Store −12 (shelves, building edges, walls). Rotation tilts
+     those lines; a vertical flip keeps them vertical, which is why these classes are *unaffected* by
+     flipping.
+   - **Vertical flip** hurts most on **classes defined by vertical layout, sky above and ground below**:
+     TallBuilding −8, Coast −8, OpenCountry −6. Rotation by ≤45° keeps the sky roughly on top, so it
+     does less damage there.
+   - So the network uses two different orientation cues, line direction and top/bottom layout, and each
+     augmentation removes one of them.
+3. **Flower is the exception that confirms the explanation.** Flower images are close-ups of petals with
+   no meaningful "up", and Flower is the only class that clearly *improves* (+9.7 with rotation, +4.3 with
+   flips). Orientation augmentation helps exactly where orientation carries no information. Forest, which
+   I expected to behave like Flower, dropped 4.6 points: forest photos still have tree trunks that are
+   vertical and a canopy on top.
+4. **Caveat for the rotation result.** At ±45° the rotated images contain larger gray corners than the
+   crop can remove, so part of the drop could come from these artifacts rather than from the tilt itself.
+   The vertical flip has no such artifacts and still costs 2.5 points, so orientation is a real factor
+   either way.
+
+### Decision
+
+Keep **±10° rotation and horizontal flip only** (Step 2b-ii). Left/right mirroring preserves everything
+that is true about a scene photo; up/down and large tilts do not.

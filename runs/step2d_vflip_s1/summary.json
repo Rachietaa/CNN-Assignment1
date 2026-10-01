@@ -1,0 +1,9 @@
+{
+  "name": "step2d_vflip_s1",
+  "best_val_acc": 0.7958333333333333,
+  "best_epoch": 54,
+  "params": 1176752,
+  "train_seconds": 355.5,
+  "device": "mps",
+  "torch": "2.14.1"
+}

@@ -1,0 +1,9 @@
+{
+  "name": "step2d_rot45",
+  "best_val_acc": 0.7916666666666666,
+  "best_epoch": 57,
+  "params": 1176752,
+  "train_seconds": 87.5,
+  "device": "mps",
+  "torch": "2.14.1"
+}
