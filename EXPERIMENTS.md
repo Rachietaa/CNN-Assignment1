@@ -17,6 +17,7 @@ The test set is only evaluated once, on the final selected model.
 | # | Experiment | Config | What changed | Why | Val acc | Observation |
 |---|---|---|---|---|---:|---|
 | 0 | Baseline | `configs/baseline.yaml` | Starter TNet, grayscale 64×64, Adam 2e-3, 20 epochs | Sanity check / reference point | 48.1% | Heavy overfitting: train acc 99% vs val 47%; val loss rises after epoch 7. Weakest classes: InsideCity, Kitchen (20%), Industrial (31%). |
+| 1 | Deeper CNN | `configs/step1_deeper_cnn.yaml` | 4 conv blocks (8 conv layers) + BatchNorm + global avg pool + dropout 0.3; training unchanged | One 3×3 layer can't see objects or layout | 70.8% | +22.7 pts. Val acc very unstable (53–71% from epoch 6 on; last-5-epoch mean 65.6%). Still overfits (train 97%). Indoor classes still weakest. |
 
 ---
 
@@ -134,3 +135,118 @@ The val split is random rather than stratified, so classes have 24–39 val imag
   instead of memorizing positions in a large linear layer → **Step 1**.
 - Fight overfitting with augmentation and regularization → **Step 2**.
 - Revisit resolution (64 → 128) and the gray-vs-color question in later steps.
+
+---
+
+## Step 1 — Deeper CNN from scratch
+
+**Question.** Step 0 showed that a single 3×3 conv layer can only see edges and textures, and that 99.7%
+of its parameters sit in one linear layer that memorizes positions. Does a proper multi-layer CNN, which
+can build up from edges to parts to objects and layout, do much better on the same data?
+
+**Controlled change.** Only the architecture changed. Data, preprocessing (grayscale 64×64, no
+augmentation), optimizer (Adam 0.002), batch size (64), epochs (20), seed and split are identical to Step 0.
+
+**Reproduce.**
+```bash
+python train.py --config configs/step1_deeper_cnn.yaml
+python evaluate.py --checkpoint runs/step1_deeper_cnn/best.pt
+```
+
+### Architecture: `SceneCNN` ([src/models.py](src/models.py))
+
+Each block = Conv3×3 → BatchNorm → ReLU → Conv3×3 → BatchNorm → ReLU → MaxPool 2×2.
+Padding 1 keeps the size inside a block; the pool halves it.
+
+| Stage | Output shape (64px input) | Parameters |
+|---|---|---:|
+| Input (grayscale) | 1 × 64 × 64 | – |
+| Block 1 (1 → 32) | 32 × 32 × 32 | 9,632 |
+| Block 2 (32 → 64) | 64 × 16 × 16 | 55,552 |
+| Block 3 (64 → 128) | 128 × 8 × 8 | 221,696 |
+| Block 4 (128 → 256) | 256 × 4 × 4 | 885,760 |
+| Global average pool | 256 | 0 |
+| Dropout 0.3 → Linear 256 → 16 | 16 | 4,112 |
+| **Total** | | **1,176,752** |
+
+Design choices and why:
+- **8 conv layers instead of 1.** After 4 blocks each output unit sees most of the 64×64 image, so the
+  network can respond to whole objects and scene layout, not only local texture.
+- **BatchNorm.** Keeps activations well scaled so an 8-layer network trains quickly with the same Adam
+  learning rate as the baseline.
+- **Global average pooling instead of flattening.** The baseline's 57,600-weight linear layer memorized
+  *where* features occurred. Averaging over space forces the network to describe *what* is in the scene,
+  and shrinks the head to 4,112 parameters (0.3% of the model, vs 99.7% in TNet).
+- **Dropout 0.3** before the classifier, as light regularization.
+
+The model has 20× more parameters than TNet, but they are almost all in conv filters shared across the
+image rather than in a position-specific linear layer.
+
+### Result
+
+- Best epoch **16**: **340 / 480 correct = 70.8%** validation accuracy (Step 0: 231 / 480 = 48.1%).
+- **+22.7 percentage points** from architecture alone. Training took 31.6 s on MPS (Step 0: 9.9 s).
+
+| Epoch | Train loss | Train acc | Val loss | Val acc |
+|---:|---:|---:|---:|---:|
+| 1 | 2.423 | 19.2% | 2.702 | 15.4% |
+| 4 | 1.300 | 55.7% | 1.555 | 48.5% |
+| 6 | 0.928 | 69.4% | 1.199 | 61.3% |
+| 8 | 0.734 | 74.6% | 1.062 | 65.4% |
+| 10 | 0.590 | 80.7% | 1.744 | 52.7% |
+| 13 | 0.388 | 87.4% | 1.961 | 53.8% |
+| **16** | 0.202 | 94.1% | **0.942** | **70.8%** (best) |
+| 19 | 0.157 | 95.3% | 1.687 | 58.3% |
+| 20 | 0.130 | 96.5% | 1.126 | 70.0% |
+
+![Step 1 curves](runs/step1_deeper_cnn/curves.png)
+
+### Per-class validation accuracy (best checkpoint)
+
+| Class | Step 0 | Step 1 | Change | Most confused with (Step 1) |
+|---|---:|---:|---:|---|
+| Bedroom | 41.0% | 46.2% (18/39) | +5.2 | LivingRoom (14) |
+| Kitchen | 20.0% | 50.0% (15/30) | +30.0 | Office (7) |
+| InsideCity | 20.0% | 53.3% (16/30) | +33.3 | Office (5) |
+| Industrial | 31.0% | 58.6% (17/29) | +27.6 | Store (4) |
+| Street | 81.2% | 62.5% (20/32) | −18.7 | Highway (5) |
+| OpenCountry | 50.0% | 64.3% (18/28) | +14.3 | Mountain (4) |
+| LivingRoom | 38.5% | 69.2% (18/26) | +30.7 | Office (5) |
+| Coast | 66.7% | 69.7% (23/33) | +3.0 | OpenCountry (8) |
+| Highway | 57.1% | 75.0% (21/28) | +17.9 | Coast (5) |
+| TallBuilding | 67.9% | 75.0% (21/28) | +7.1 | Office (4) |
+| Flower | 48.4% | 80.6% (25/31) | +32.2 | Mountain (3) |
+| Store | 45.2% | 80.6% (25/31) | +35.4 | InsideCity (2) |
+| Office | 50.0% | 83.3% (20/24) | +33.3 | Bedroom (1) |
+| Mountain | 50.0% | 89.3% (25/28) | +39.3 | Coast (1) |
+| Forest | 37.9% | 89.7% (26/29) | +51.8 | Flower (1) |
+| Suburb | 61.8% | 94.1% (32/34) | +32.3 | LivingRoom (1) |
+
+### Observations
+
+1. **Depth was the main bottleneck.** 15 of 16 classes improved, most by 25–50 points. The biggest gains
+   are texture-heavy classes (Forest +52, Mountain +39) and object-defined classes (Store +35, Office +33),
+   which need more than one 3×3 layer to recognize.
+2. **Validation accuracy is very unstable.** From epoch 6 on it jumps between 52.7% and 70.8%, sometimes by
+   15 points between consecutive epochs (epoch 9 → 10: 62.5% → 52.7%). The last-5-epoch mean is only
+   **65.6%**, so the 70.8% best epoch is partly a lucky peak. Likely causes: a constant, fairly high
+   learning rate (0.002, no decay) keeps the weights moving, and BatchNorm statistics from a small
+   dataset shift between epochs.
+3. **Still overfitting.** Training accuracy reaches 96.5% while validation averages ~66%. The gap is smaller
+   than in Step 0 (99% vs 47%), but the model is still memorizing: without augmentation it sees exactly the
+   same 1,920 images every epoch.
+4. **Indoor scenes remain hardest.** Bedroom (46%), Kitchen (50%) and InsideCity (53%) are the weakest
+   classes. Bedroom is mistaken for LivingRoom 14 times (vs 18 correct). These
+   classes share furniture and are separated mostly by specific objects, which 64×64 grayscale images make
+   hard to see.
+5. **Street got worse (81% → 63%),** mostly mistaken for Highway. Both are roads with strong perspective
+   lines. The baseline may have matched Street on simple line patterns; the deeper model looks at overall
+   layout, where the two classes are similar.
+
+### What this suggests for the next step
+
+- **Step 2: augmentation**, to reduce overfitting by showing the model new variations of the 1,920 images
+  every epoch.
+- **Add a learning-rate schedule** (e.g. cosine decay), so the weights settle at the end of training
+  instead of jumping around. This should make validation accuracy more stable and the best-epoch number
+  more trustworthy. Since it is a separate change from augmentation, it should be tested on its own.

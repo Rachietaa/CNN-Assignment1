@@ -1,0 +1,9 @@
+{
+  "name": "step1_deeper_cnn",
+  "best_val_acc": 0.7083333333333334,
+  "best_epoch": 16,
+  "params": 1176752,
+  "train_seconds": 31.6,
+  "device": "mps",
+  "torch": "2.14.1"
+}
