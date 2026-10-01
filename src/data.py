@@ -32,6 +32,8 @@ def build_transform(cfg, train):
         t.append(transforms.Resize((size, size)))
     if aug.get('hflip'):
         t.append(transforms.RandomHorizontalFlip(p=aug['hflip']))
+    if aug.get('vflip'):
+        t.append(transforms.RandomVerticalFlip(p=aug['vflip']))
     if aug.get('brightness') or aug.get('contrast'):
         t.append(transforms.ColorJitter(brightness=aug.get('brightness', 0),
                                         contrast=aug.get('contrast', 0)))
