@@ -51,6 +51,7 @@ src/models.py    architectures
 src/engine.py    training / evaluation loops
 train.py         training entry point
 evaluate.py      evaluation entry point (val or test, per-class accuracy, confusion matrix)
+preview_augmentation.py  saves a grid of augmented training images for a visual check
 EXPERIMENTS.md   experiment log
 ```
 
