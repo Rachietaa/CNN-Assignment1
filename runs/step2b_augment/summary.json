@@ -1,0 +1,9 @@
+{
+  "name": "step2b_augment",
+  "best_val_acc": 0.7645833333333333,
+  "best_epoch": 20,
+  "params": 1176752,
+  "train_seconds": 30.4,
+  "device": "mps",
+  "torch": "2.14.1"
+}

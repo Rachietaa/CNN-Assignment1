@@ -19,6 +19,9 @@ The test set is only evaluated once, on the final selected model.
 | 0 | Baseline | `configs/baseline.yaml` | Starter TNet, grayscale 64×64, Adam 2e-3, 20 epochs | Sanity check / reference point | 48.1% | Heavy overfitting: train acc 99% vs val 47%; val loss rises after epoch 7. Weakest classes: InsideCity, Kitchen (20%), Industrial (31%). |
 | 1 | Deeper CNN | `configs/step1_deeper_cnn.yaml` | 4 conv blocks (8 conv layers) + BatchNorm + global avg pool + dropout 0.3; training unchanged | One 3×3 layer can't see objects or layout | 70.8% | +22.7 pts. Val acc very unstable (53–71% from epoch 6 on; last-5-epoch mean 65.6%). Still overfits (train 97%). Indoor classes still weakest. |
 | 2a | + Cosine LR | `configs/step2a_cosine.yaml` | LR decays from 0.002 to 0 over the run (cosine), stepped every batch | Step 1's val acc jumped ±15 pts between epochs | 77.3% | +6.5 pts best, +11.1 pts last-5 mean (65.6 → 76.8%). Val curve now smooth; last 5 epochs within 76.5–77.3%. Overfitting gap still large (train 99%). |
+| 2b-i | + Augmentation | `configs/step2b_augment.yaml` | Random resized crop, h-flip, ±10° rotation, brightness/contrast (train only); 20 epochs | Step 2a memorizes the train set (99% train vs 77% val) | 76.5% | −0.8 pts (noise). Train/val gap shrank 22 → 9 pts, but the model is now under-trained (train 86%). |
+| 2b ctrl | Longer training, no aug | `configs/step2a_cosine_60ep.yaml` | Step 2a with 60 epochs | Control: separate "augmentation" from "more epochs" | 79.0% | Last-5 mean +1.5 pts only. Reaches 100% train acc / loss 0.002 — pure memorization; val loss 0.84. |
+| 2b-ii | + Augmentation, 60 epochs | `configs/step2b_augment_60ep.yaml` | Step 2b-i with 60 epochs | Augmented data needs more epochs to fit | **82.7%** | +5.4 pts vs 2a; +4.1 pts last-5 mean vs the 60-epoch control. Val loss 0.55 (best so far). Augmentation and longer training only help together. |
 
 ---
 
@@ -358,3 +361,131 @@ Each val class has only 24–39 images, so one image is worth ~3 points. Changes
 Keep the cosine schedule from now on. The model now fits the training set almost perfectly while
 validation stays at 77%, so the next lever is **data augmentation (Step 2b)**: show the network a
 different random variant of each image every epoch so it cannot simply memorize them.
+
+---
+
+## Step 2b — Data augmentation (with a longer-training control)
+
+**Question.** After Step 2a the optimizer is stable, but the model fits the training set almost perfectly
+(99% train, loss 0.10) while validation sits at 77%. It has memorized the 1,920 images. If every epoch
+shows a slightly different random version of each image, can it still memorize, or does it have to learn
+features that generalize?
+
+**Controlled change.** Augmentation is added to the **training images only**; validation and test images
+are only resized, exactly as before. Everything else equals Step 2a.
+
+**Reproduce.**
+```bash
+python preview_augmentation.py --config configs/step2b_augment.yaml   # visual check
+python train.py --config configs/step2b_augment.yaml                  # 2b-i   (20 epochs)
+python train.py --config configs/step2a_cosine_60ep.yaml              # control (60 epochs, no aug)
+python train.py --config configs/step2b_augment_60ep.yaml             # 2b-ii  (60 epochs)
+```
+
+### Augmentations and why each fits scene images
+
+Applied in this order (`build_transform` in [src/data.py](src/data.py)):
+
+| Augmentation | Setting | Why |
+|---|---|---|
+| Random rotation | ±10°, bilinear, corners filled mid-gray | Hand-held cameras are slightly tilted; small angles keep "up" meaningful |
+| Random resized crop | keep 70–100% of the area, aspect 3:4–4:3, resize to 64×64 | Same scene framed slightly differently (zoom/shift) |
+| Horizontal flip | p = 0.5 | A mirrored bedroom or street is still the same class |
+| Brightness / contrast | ±20% each | Different lighting and exposure. No hue/saturation, since 15 of 16 classes are grayscale |
+
+Deliberately **not** used here: vertical flips and large rotations (scenes have a fixed "up": sky above,
+floor below), which will be tested separately as a likely failure.
+
+### Checking the augmentation before training
+
+Before training, `preview_augmentation.py` saves each original image next to 5 random augmented versions.
+The first version of the pipeline had a bug that this check caught:
+
+- Rotation ran **after** resizing to 64×64, with torchvision's default **nearest-neighbor** interpolation.
+  At 64px this produced jagged "staircase" artifacts across edges (horizons, walls), plus **black corner
+  wedges**. Neither ever appears in validation images, so the model could learn to rely on artifacts.
+- Fix: rotate at **full resolution, before the crop/resize**, with **bilinear** interpolation and
+  **mid-gray** corner fill. The crop afterwards removes most of the corners.
+
+Final preview (left column = original, other columns = random augmentations):
+
+![Augmentation preview](runs/step2b_augment/augment_preview.png)
+
+### Result: the 2×2 comparison
+
+Augmentation makes each epoch harder, so 20 epochs might not be enough. Comparing only "Step 2a" vs
+"augmentation + 60 epochs" would mix two changes, so a **control** was added: Step 2a trained for 60
+epochs without augmentation. Together the four runs separate the two effects.
+
+**Validation accuracy, last-5-epoch mean** (best epoch in brackets):
+
+| | 20 epochs | 60 epochs |
+|---|---:|---:|
+| **No augmentation** | 76.8% (77.3%) — Step 2a | 78.3% (79.0%) — control |
+| **Augmentation** | 76.0% (76.5%) — Step 2b-i | **82.4% (82.7%)** — Step 2b-ii |
+
+**Train vs. validation at the end of training:**
+
+| Run | Final train acc | Final train loss | Final val loss | Best val acc |
+|---|---:|---:|---:|---:|
+| 2a (no aug, 20 ep) | 99.0% | 0.100 | 0.709 | 77.3% (371/480) |
+| 2b-i (aug, 20 ep) | 85.8% | 0.450 | 0.655 | 76.5% (367/480) |
+| Control (no aug, 60 ep) | 100.0% | 0.002 | 0.842 | 79.0% (379/480) |
+| **2b-ii (aug, 60 ep)** | 98.5% | 0.071 | **0.552** | **82.7% (397/480)** |
+
+Training time: 30 s for 20 epochs, ~85 s for 60 epochs. The augmentation itself adds no measurable cost.
+
+![Step 2b-ii curves](runs/step2b_augment_60ep/curves.png)
+
+### Per-class validation accuracy (Step 2a → Step 2b-ii)
+
+Reminder: one image ≈ 3 points per class; changes under ~7 points are within noise.
+
+| Class | Step 2a | Step 2b-ii | Change | Most confused with (2b-ii) |
+|---|---:|---:|---:|---|
+| InsideCity | 76.7% | 63.3% (19/30) | −13.3 | Street (5) |
+| Bedroom | 53.8% | 71.8% (28/39) | +17.9 | LivingRoom (5) |
+| LivingRoom | 57.7% | 73.1% (19/26) | +15.4 | Bedroom (3) |
+| Office | 79.2% | 75.0% (18/24) | −4.2 | LivingRoom (3) |
+| OpenCountry | 71.4% | 75.0% (21/28) | +3.6 | Coast (4) |
+| Kitchen | 73.3% | 76.7% (23/30) | +3.3 | Bedroom (3) |
+| Store | 80.6% | 77.4% (24/31) | −3.2 | InsideCity (3) |
+| Industrial | 62.1% | 82.8% (24/29) | +20.7 | InsideCity (2) |
+| Highway | 75.0% | 85.7% (24/28) | +10.7 | Bedroom (1) |
+| Flower | 90.3% | 87.1% (27/31) | −3.2 | Mountain (3) |
+| Mountain | 89.3% | 89.3% (25/28) | 0.0 | Flower (1) |
+| Coast | 75.8% | 90.9% (30/33) | +15.2 | OpenCountry (3) |
+| TallBuilding | 85.7% | 92.9% (26/28) | +7.1 | Industrial (2) |
+| Forest | 82.8% | 93.1% (27/29) | +10.3 | Industrial (1) |
+| Street | 87.5% | 93.8% (30/32) | +6.2 | Highway (2) |
+| Suburb | 97.1% | 94.1% (32/34) | −2.9 | Industrial (1) |
+
+### Observations
+
+1. **Augmentation alone at 20 epochs "failed"** (76.5% vs 77.3%, within noise). But the train/val gap
+   shrank from 22 to 9 points and train accuracy fell to 86%: the model was no longer memorizing, it just
+   hadn't finished learning. Judged on that run alone, we would have wrongly concluded that augmentation
+   doesn't help.
+2. **Longer training alone barely helps.** Without augmentation, 60 epochs only adds 1.5 points (last-5
+   mean). The model hits 100% train accuracy with loss 0.002, and validation loss gets *worse*
+   (0.71 → 0.84): the extra epochs are spent memorizing harder.
+3. **Together they work: 82.7%, +5.4 over Step 2a**, and +4.1 over the equally long control. Augmentation
+   prevents memorization; the extra epochs give the model time to learn from the harder, more varied data.
+   This is an interaction effect, invisible if you change one thing at a time with fixed epochs.
+4. **Best generalization so far by validation loss** (0.55 vs 0.71 for 2a and 0.84 for the control). The
+   model is both more accurate and less over-confident on images it gets wrong.
+5. **The Bedroom/LivingRoom confusion shrank a lot**: Bedroom → LivingRoom errors dropped from 14 to 5,
+   and both classes gained 15–18 points. Industrial gained 21 points. InsideCity dropped 13 points (4
+   images), now mixed up with Street; both are dense urban scenes.
+6. **The visual check mattered.** The first augmentation pipeline produced artifact-heavy images that look
+   nothing like validation images. Checking augmentation visually before training is now part of the
+   workflow.
+
+### What this suggests for the next step
+
+Augmentation + 60 epochs is the new reference (82.7%). Train accuracy is back to 98.5%, so the model can
+still memorize somewhat. Next:
+- **Step 2c:** add Cutout (Random Erasing) to see if hiding random patches pushes the model to use the
+  whole scene.
+- **Step 2d:** test large rotations and vertical flips, expected to hurt because scenes have a fixed
+  orientation.
