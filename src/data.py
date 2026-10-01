@@ -38,6 +38,11 @@ def build_transform(cfg, train):
 
     t.append(transforms.ToTensor())
     t.append(transforms.Normalize(mean=cfg['mean'], std=cfg['std']))
+    if 'random_erasing' in aug:
+        # Cutout-style: blank out one random rectangle. Runs after Normalize, so value=0 is the
+        # dataset mean (mid-gray) rather than black.
+        er = aug['random_erasing']
+        t.append(transforms.RandomErasing(p=er['p'], scale=tuple(er['scale']), value=0))
     return transforms.Compose(t)
 
 
@@ -60,7 +65,9 @@ def build_loaders(cfg, device):
     val_view = datasets.ImageFolder(root / 'train', transform=eval_tf)
     test_set = datasets.ImageFolder(root / 'test', transform=eval_tf)
 
-    train_idx, val_idx = split_indices(len(train_view), data_cfg['val_fraction'], cfg['seed'])
+    # split_seed keeps the train/val split fixed when only the training seed is varied.
+    split_seed = data_cfg.get('split_seed', cfg['seed'])
+    train_idx, val_idx = split_indices(len(train_view), data_cfg['val_fraction'], split_seed)
     train_set = Subset(train_view, train_idx)
     val_set = Subset(val_view, val_idx)
 
