@@ -1,0 +1,24 @@
+# Step 1 — deeper CNN from scratch. Only the architecture changes vs. baseline.yaml.
+name: step1_deeper_cnn
+seed: 0
+
+data:
+  root: data
+  val_fraction: 0.20
+  img_size: 64
+  grayscale: true
+  mean: [0.5]
+  std: [0.5]
+  num_workers: 2
+
+model:
+  name: scenecnn
+  in_channels: 1
+  widths: [32, 64, 128, 256]
+  dropout: 0.3
+
+train:
+  optimizer: adam
+  lr: 0.002
+  batch_size: 64
+  epochs: 20
