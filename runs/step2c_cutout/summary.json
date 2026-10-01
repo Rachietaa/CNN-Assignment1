@@ -1,0 +1,9 @@
+{
+  "name": "step2c_cutout",
+  "best_val_acc": 0.8229166666666666,
+  "best_epoch": 53,
+  "params": 1176752,
+  "train_seconds": 87.9,
+  "device": "mps",
+  "torch": "2.14.1"
+}

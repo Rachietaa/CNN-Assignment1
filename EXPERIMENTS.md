@@ -22,6 +22,7 @@ The test set is only evaluated once, on the final selected model.
 | 2b-i | + Augmentation | `configs/step2b_augment.yaml` | Random resized crop, h-flip, ±10° rotation, brightness/contrast (train only); 20 epochs | Step 2a memorizes the train set (99% train vs 77% val) | 76.5% | −0.8 pts (noise). Train/val gap shrank 22 → 9 pts, but the model is now under-trained (train 86%). |
 | 2b ctrl | Longer training, no aug | `configs/step2a_cosine_60ep.yaml` | Step 2a with 60 epochs | Control: separate "augmentation" from "more epochs" | 79.0% | Last-5 mean +1.5 pts only. Reaches 100% train acc / loss 0.002 — pure memorization; val loss 0.84. |
 | 2b-ii | + Augmentation, 60 epochs | `configs/step2b_augment_60ep.yaml` | Step 2b-i with 60 epochs | Augmented data needs more epochs to fit | **82.7%** | +5.4 pts vs 2a; +4.1 pts last-5 mean vs the 60-epoch control. Val loss 0.55 (best so far). Augmentation and longer training only help together. |
+| 2c | + Cutout | `configs/step2c_cutout.yaml` | Random Erasing (p 0.5, 2–20% of area) on top of 2b-ii; **3 seeds each** | Force the model to use the whole scene, not one object | 83.1% ± 1.0 (3 seeds) | **No real effect**: 2b-ii is 82.8% ± 0.3. Last-5 means identical (82.1 vs 82.2%). Single seeds pointed both ways (−0.4 to +1.7 pts). Lower train acc and val loss, so it regularizes, but accuracy doesn't move. |
 
 ---
 
@@ -489,3 +490,104 @@ still memorize somewhat. Next:
   whole scene.
 - **Step 2d:** test large rotations and vertical flips, expected to hurt because scenes have a fixed
   orientation.
+
+---
+
+## Step 2c — Cutout (Random Erasing), measured over 3 seeds
+
+**Question.** Several classes are confused because they share parts (Bedroom/LivingRoom furniture,
+InsideCity/Street buildings). If a random patch of each training image is hidden, the model can't rely on
+any single object and should learn to use the whole scene. Does this improve on Step 2b-ii?
+
+**Controlled change.** Step 2b-ii plus one augmentation:
+
+| Setting | Value | Meaning |
+|---|---|---|
+| Probability | 0.5 | half of the training images get one erased rectangle |
+| Size | 2–20% of the image area, random aspect ratio | from a small object up to a large region |
+| Fill | 0 after normalization = mid-gray | same neutral gray as the rotation fill; not black |
+
+Applied after normalization, training images only (verified: the eval transform still contains only
+Grayscale → Resize → ToTensor → Normalize). The augmentation preview was checked before training.
+
+![Cutout preview](runs/step2c_cutout/augment_preview.png)
+
+**Reproduce.**
+```bash
+python train.py --config configs/step2c_cutout.yaml                # seed 0
+python train.py --config configs/step2c_cutout.yaml --seed 1       # → runs/step2c_cutout_s1
+python train.py --config configs/step2c_cutout.yaml --seed 2       # → runs/step2c_cutout_s2
+python train.py --config configs/step2b_augment_60ep.yaml --seed 1 # 2b-ii repeats for comparison
+python train.py --config configs/step2b_augment_60ep.yaml --seed 2
+```
+
+### Why 3 seeds
+
+From here on, improvements are expected to be small. A single run depends on random weight
+initialization, batch order and which augmentations happen to be drawn, so we need to know how much the
+result moves from that alone. `train.py --seed N` changes only that training randomness; the
+train/val split stays fixed (`split_seed`), so all runs are scored on the same 480 images.
+Both Step 2b-ii and Step 2c were trained with seeds 0, 1 and 2 (6 runs, ~85 s each).
+
+### Result
+
+| Seed | 2b-ii best val | 2c best val | Difference |
+|---:|---:|---:|---:|
+| 0 | 82.7% (epoch 60) | 82.3% (epoch 53) | −0.4 |
+| 1 | 83.1% (epoch 54) | 82.7% (epoch 57) | −0.4 |
+| 2 | 82.5% (epoch 41) | 84.2% (epoch 54) | +1.7 |
+| **Mean ± std** | **82.8% ± 0.3** | **83.1% ± 1.0** | +0.3 |
+
+| Mean over 3 seeds | 2b-ii | 2c |
+|---|---:|---:|
+| Last-5-epoch val acc | 82.2% ± 0.7 | 82.1% ± 0.6 |
+| Final train acc | 98.1% | 95.7% |
+| Lowest val loss | 0.561 | 0.525 |
+
+**Per-class validation accuracy, averaged over the 3 seeds:**
+
+| Class | 2b-ii | 2c | Change |
+|---|---:|---:|---:|
+| Office | 83.3% | 76.4% | −6.9 |
+| OpenCountry | 76.2% | 72.6% | −3.6 |
+| Store | 81.7% | 78.5% | −3.2 |
+| Bedroom | 74.4% | 71.8% | −2.6 |
+| Forest | 94.3% | 92.0% | −2.3 |
+| InsideCity | 64.4% | 62.2% | −2.2 |
+| Coast | 87.9% | 87.9% | 0.0 |
+| Highway | 85.7% | 85.7% | 0.0 |
+| Industrial | 79.3% | 79.3% | 0.0 |
+| TallBuilding | 91.7% | 91.7% | 0.0 |
+| Suburb | 95.1% | 96.1% | +1.0 |
+| Mountain | 91.7% | 92.9% | +1.2 |
+| Street | 90.6% | 93.8% | +3.1 |
+| LivingRoom | 67.9% | 73.1% | +5.1 |
+| Flower | 81.7% | 88.2% | +6.5 |
+| Kitchen | 77.8% | 85.6% | +7.8 |
+
+### Observations
+
+1. **Cutout has no measurable effect on accuracy.** The +0.3-point difference in best-epoch accuracy is
+   far smaller than the seed-to-seed spread (2c alone ranges from 82.3% to 84.2%), and the last-5-epoch
+   means are identical. The hypothesis is not supported at this setting.
+2. **A single run would have given the wrong answer, in either direction.** With seed 0 only, we would
+   have concluded "Cutout hurts" (−0.4); with seed 2 only, "Cutout gives +1.7". The spread between seeds
+   of the *same* config is up to 1.9 points. **Lesson: at this stage, differences under ~2 points need
+   multiple seeds before drawing a conclusion.**
+3. **It does regularize, but the regularization isn't the bottleneck.** Training accuracy drops
+   (98.1% → 95.7%) and validation loss improves (0.56 → 0.52), so the model is less over-confident. But
+   it gets no more images right: the remaining errors aren't caused by memorization that Cutout prevents.
+4. **Per-class shifts roughly cancel out.** Kitchen, Flower and LivingRoom gain 5–8 points, while Office,
+   OpenCountry and Store lose 3–7. With ~30 images per class and 3 seeds this is suggestive at most. One
+   plausible reading: at 64×64 an erased rectangle covering up to 20% of the image can hide the single
+   object that defines a class (the monitor in an Office), turning some training images into misleading
+   examples.
+
+### Decision
+
+Keep **Step 2b-ii (no Cutout)** as the reference configuration: equal accuracy with one less component.
+Random Erasing is worth revisiting with pretrained models at higher resolution, where a patch hides a
+smaller fraction of the scene's information and modern fine-tuning recipes commonly use it.
+
+The from-scratch CNN has plateaued around **82–83%**. The next experiments test augmentations that
+should *hurt* (Step 2d), and then whether more capacity or resolution helps from scratch (Step 3).
