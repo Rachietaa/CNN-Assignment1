@@ -55,16 +55,29 @@ def build_optimizer(cfg, model):
     raise ValueError(f'Unknown optimizer: {name}')
 
 
-def train_model(model, loaders, optimizer, epochs, device):
+def build_scheduler(cfg, optimizer, steps_per_epoch):
+    """Optional LR schedule, stepped once per batch. Returns None if not configured."""
+    name = cfg['train'].get('scheduler')
+    if name is None:
+        return None
+    if name == 'cosine':
+        # Decays the LR from its initial value to 0 over the whole run.
+        total_steps = cfg['train']['epochs'] * steps_per_epoch
+        return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
+    raise ValueError(f'Unknown scheduler: {name}')
+
+
+def train_model(model, loaders, optimizer, epochs, device, scheduler=None):
     """Train and keep the checkpoint with the best validation accuracy."""
     criterion = nn.CrossEntropyLoss()
     model = model.to(device)
     best_state, best_val_acc, best_epoch = copy.deepcopy(model.state_dict()), 0.0, 0
-    history = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': []}
+    history = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': [], 'lr': []}
     start = time.time()
 
     for epoch in range(1, epochs + 1):
         model.train()
+        history['lr'].append(optimizer.param_groups[0]['lr'])  # LR at the start of the epoch
         loss_sum, correct, seen = 0.0, 0, 0
         for images, labels in loaders['train']:
             images, labels = images.to(device), labels.to(device)
@@ -73,6 +86,8 @@ def train_model(model, loaders, optimizer, epochs, device):
             loss = criterion(logits, labels)
             loss.backward()
             optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
 
             loss_sum += loss.item() * images.size(0)
             correct += (logits.argmax(dim=1) == labels).sum().item()

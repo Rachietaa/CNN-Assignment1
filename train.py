@@ -14,7 +14,7 @@ import torch
 import yaml
 
 from src.data import build_loaders
-from src.engine import build_optimizer, get_device, set_seed, train_model
+from src.engine import build_optimizer, build_scheduler, get_device, set_seed, train_model
 from src.models import build_model
 
 
@@ -57,8 +57,9 @@ def main():
     print(f'Trainable parameters: {n_params:,}')
 
     optimizer = build_optimizer(cfg, model)
+    scheduler = build_scheduler(cfg, optimizer, steps_per_epoch=len(loaders['train']))
     model, history, best_val_acc, best_epoch, seconds = train_model(
-        model, loaders, optimizer, cfg['train']['epochs'], device)
+        model, loaders, optimizer, cfg['train']['epochs'], device, scheduler=scheduler)
 
     # The test set is deliberately NOT evaluated here; use evaluate.py on the final model only.
     out_dir = Path('runs') / cfg['name']
