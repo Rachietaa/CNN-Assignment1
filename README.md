@@ -28,6 +28,9 @@ data/
 # Train (writes runs/<name>/{best.pt, history.json, summary.json, curves.png})
 python train.py --config configs/baseline.yaml
 
+# Repeat with another training seed (same train/val split) -> runs/<name>_s1/
+python train.py --config configs/baseline.yaml --seed 1
+
 # Evaluate on the validation split (used for model selection)
 python evaluate.py --checkpoint runs/baseline/best.pt
 

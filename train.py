@@ -36,11 +36,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', required=True)
     parser.add_argument('--data-root', help='override data.root from the config')
+    parser.add_argument('--seed', type=int,
+                        help='override the training seed (init, batch order, augmentation); '
+                             'the train/val split stays fixed. Output goes to runs/<name>_s<seed>/')
     args = parser.parse_args()
 
     cfg = yaml.safe_load(Path(args.config).read_text())
     if args.data_root:
         cfg['data']['root'] = args.data_root
+    if args.seed is not None:
+        cfg['data'].setdefault('split_seed', cfg['seed'])
+        cfg['seed'] = args.seed
+        cfg['name'] = f"{cfg['name']}_s{args.seed}"
 
     set_seed(cfg['seed'])
     device = get_device()
