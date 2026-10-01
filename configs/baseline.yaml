@@ -1,0 +1,23 @@
+# Exp 0 — starter baseline, reproduced exactly from the course notebook.
+name: baseline
+seed: 0
+
+data:
+  root: data
+  val_fraction: 0.20
+  img_size: 64
+  grayscale: true
+  mean: [0.5]
+  std: [0.5]
+  num_workers: 2
+
+model:
+  name: tnet
+  in_channels: 1
+  img_size: 64
+
+train:
+  optimizer: adam
+  lr: 0.002
+  batch_size: 64
+  epochs: 20
