@@ -1,0 +1,31 @@
+# Step 3b — Step 2b-ii at 128×128 instead of 64×64. Same architecture (global avg pool handles any size).
+name: step3b_res128
+seed: 0
+
+data:
+  root: data
+  val_fraction: 0.20
+  img_size: 128
+  grayscale: true
+  mean: [0.5]
+  std: [0.5]
+  num_workers: 2
+  augment:
+    random_resized_crop: [0.7, 1.0]   # keep 70–100% of the image area
+    hflip: 0.5
+    rotation: 10                      # degrees, ±
+    brightness: 0.2
+    contrast: 0.2
+
+model:
+  name: scenecnn
+  in_channels: 1
+  widths: [32, 64, 128, 256]
+  dropout: 0.3
+
+train:
+  optimizer: adam
+  lr: 0.002
+  batch_size: 64
+  epochs: 60
+  scheduler: cosine

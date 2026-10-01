@@ -1,0 +1,31 @@
+# Step 3c — Step 2b-ii with a 2× wider network (channels 64-128-256-512, ~4× parameters).
+name: step3c_wide
+seed: 0
+
+data:
+  root: data
+  val_fraction: 0.20
+  img_size: 64
+  grayscale: true
+  mean: [0.5]
+  std: [0.5]
+  num_workers: 2
+  augment:
+    random_resized_crop: [0.7, 1.0]   # keep 70–100% of the image area
+    hflip: 0.5
+    rotation: 10                      # degrees, ±
+    brightness: 0.2
+    contrast: 0.2
+
+model:
+  name: scenecnn
+  in_channels: 1
+  widths: [64, 128, 256, 512]
+  dropout: 0.3
+
+train:
+  optimizer: adam
+  lr: 0.002
+  batch_size: 64
+  epochs: 60
+  scheduler: cosine
