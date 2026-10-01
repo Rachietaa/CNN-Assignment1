@@ -1,5 +1,6 @@
 """Training / evaluation loops and shared utilities."""
 import copy
+import math
 import random
 import time
 
@@ -52,6 +53,18 @@ def build_optimizer(cfg, model):
     if name == 'adam':
         return torch.optim.Adam(model.parameters(), lr=opt_cfg['lr'],
                                 weight_decay=opt_cfg.get('weight_decay', 0.0))
+    if name == 'adamw':
+        # Pretrained layers get a smaller LR (backbone_lr) than the newly initialized head (lr),
+        # so fine-tuning adjusts the ImageNet features gently. Frozen parameters are left out.
+        trainable = [p for p in model.parameters() if p.requires_grad]
+        groups = [{'params': trainable, 'lr': opt_cfg['lr']}]
+        if 'backbone_lr' in opt_cfg and hasattr(model, 'head_parameters'):
+            head_ids = {id(p) for p in model.head_parameters()}
+            groups = [
+                {'params': [p for p in trainable if id(p) in head_ids], 'lr': opt_cfg['lr']},
+                {'params': [p for p in trainable if id(p) not in head_ids], 'lr': opt_cfg['backbone_lr']},
+            ]
+        return torch.optim.AdamW(groups, weight_decay=opt_cfg.get('weight_decay', 0.01))
     raise ValueError(f'Unknown optimizer: {name}')
 
 
@@ -63,7 +76,18 @@ def build_scheduler(cfg, optimizer, steps_per_epoch):
     if name == 'cosine':
         # Decays the LR from its initial value to 0 over the whole run.
         total_steps = cfg['train']['epochs'] * steps_per_epoch
-        return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
+        warmup_steps = cfg['train'].get('warmup_epochs', 0) * steps_per_epoch
+        if warmup_steps == 0:
+            return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
+
+        # Linear warm-up from ~0 to the full LR, then cosine decay to 0. The warm-up keeps the first,
+        # large updates (driven by the randomly initialized head) from damaging pretrained weights.
+        def factor(step):
+            if step < warmup_steps:
+                return (step + 1) / warmup_steps
+            progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+            return 0.5 * (1 + math.cos(math.pi * progress))
+        return torch.optim.lr_scheduler.LambdaLR(optimizer, factor)
     raise ValueError(f'Unknown scheduler: {name}')
 
 
