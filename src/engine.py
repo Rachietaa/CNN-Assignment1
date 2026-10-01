@@ -26,18 +26,23 @@ def get_device():
 
 
 @torch.inference_mode()
-def evaluate(model, loader, device, num_classes=None):
-    """Return loss, accuracy, and (optionally) a confusion matrix [true, pred]."""
+def evaluate(model, loader, device, num_classes=None, tta=False):
+    """Return loss, accuracy, and (optionally) a confusion matrix [true, pred].
+
+    tta=True: test-time augmentation — average the predicted probabilities for each image and its
+    horizontal mirror (the only flip that preserves scene meaning, see Step 2d).
+    """
     model.eval()
-    criterion = nn.CrossEntropyLoss(reduction='sum')
     loss_sum, correct, total = 0.0, 0, 0
     confusion = torch.zeros(num_classes, num_classes, dtype=torch.long) if num_classes else None
 
     for images, labels in loader:
         images, labels = images.to(device), labels.to(device)
-        logits = model(images)
-        loss_sum += criterion(logits, labels).item()
-        preds = logits.argmax(dim=1)
+        probs = model(images).softmax(dim=1)
+        if tta:
+            probs = (probs + model(images.flip(dims=[3])).softmax(dim=1)) / 2
+        loss_sum += nn.functional.nll_loss(probs.clamp_min(1e-12).log(), labels, reduction='sum').item()
+        preds = probs.argmax(dim=1)
         correct += (preds == labels).sum().item()
         total += labels.size(0)
         if confusion is not None:
@@ -91,9 +96,26 @@ def build_scheduler(cfg, optimizer, steps_per_epoch):
     raise ValueError(f'Unknown scheduler: {name}')
 
 
-def train_model(model, loaders, optimizer, epochs, device, scheduler=None):
-    """Train and keep the checkpoint with the best validation accuracy."""
-    criterion = nn.CrossEntropyLoss()
+def build_mixer(mix_cfg, num_classes):
+    """Mixup or CutMix (chosen at random per batch) from torchvision.transforms.v2. Returns None if unset."""
+    if not mix_cfg:
+        return None
+    from torchvision.transforms import v2
+    return v2.RandomChoice([v2.MixUp(alpha=mix_cfg['mixup_alpha'], num_classes=num_classes),
+                            v2.CutMix(alpha=mix_cfg['cutmix_alpha'], num_classes=num_classes)])
+
+
+def train_model(model, loaders, optimizer, epochs, device, scheduler=None,
+                label_smoothing=0.0, mix_cfg=None, num_classes=16):
+    """Train and keep the checkpoint with the best validation accuracy.
+
+    label_smoothing: target probability 1-ε on the true class, ε spread over the others (train loss only).
+    mix_cfg: {'p', 'mixup_alpha', 'cutmix_alpha'} — with probability p a batch is mixed with Mixup or
+    CutMix, which turns its labels into soft label vectors. Train accuracy is then measured against the
+    original (dominant) labels, so it is only approximate on mixed batches.
+    """
+    criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+    mixer = build_mixer(mix_cfg, num_classes)
     model = model.to(device)
     best_state, best_val_acc, best_epoch = copy.deepcopy(model.state_dict()), 0.0, 0
     history = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': [], 'lr': []}
@@ -104,10 +126,13 @@ def train_model(model, loaders, optimizer, epochs, device, scheduler=None):
         history['lr'].append(optimizer.param_groups[0]['lr'])  # LR at the start of the epoch
         loss_sum, correct, seen = 0.0, 0, 0
         for images, labels in loaders['train']:
-            images, labels = images.to(device), labels.to(device)
+            targets = labels
+            if mixer is not None and random.random() < mix_cfg['p']:
+                images, targets = mixer(images, labels)
+            images, labels, targets = images.to(device), labels.to(device), targets.to(device)
             optimizer.zero_grad(set_to_none=True)
             logits = model(images)
-            loss = criterion(logits, labels)
+            loss = criterion(logits, targets)
             loss.backward()
             optimizer.step()
             if scheduler is not None:

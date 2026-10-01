@@ -22,6 +22,8 @@ def main():
     parser.add_argument('--data-root', help='override data.root stored in the checkpoint')
     parser.add_argument('--strip-color', action='store_true',
                         help='analysis: convert eval images to gray (3 channels) for an RGB model')
+    parser.add_argument('--tta', action='store_true',
+                        help='average predictions over the image and its horizontal flip')
     args = parser.parse_args()
 
     device = get_device()
@@ -37,7 +39,7 @@ def main():
     model.load_state_dict(ckpt['state_dict'])
     model.to(device)
 
-    result = evaluate(model, loaders[args.split], device, num_classes=len(classes))
+    result = evaluate(model, loaders[args.split], device, num_classes=len(classes), tta=args.tta)
     confusion = result['confusion']
     per_class = (confusion.diag().float() / confusion.sum(dim=1).clamp(min=1).float()).tolist()
 
@@ -46,7 +48,7 @@ def main():
     for name, acc in sorted(zip(classes, per_class), key=lambda x: x[1]):
         print(f'  {name:<20s} {acc:.3f}')
 
-    suffix = '_nocolor' if args.strip_color else ''
+    suffix = ('_nocolor' if args.strip_color else '') + ('_tta' if args.tta else '')
     out = Path(args.checkpoint).parent / f'eval_{args.split}{suffix}.json'
     out.write_text(json.dumps({'split': args.split, 'loss': result['loss'], 'acc': result['acc'],
                                'per_class': dict(zip(classes, per_class)),

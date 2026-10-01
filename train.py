@@ -66,7 +66,9 @@ def main():
     optimizer = build_optimizer(cfg, model)
     scheduler = build_scheduler(cfg, optimizer, steps_per_epoch=len(loaders['train']))
     model, history, best_val_acc, best_epoch, seconds = train_model(
-        model, loaders, optimizer, cfg['train']['epochs'], device, scheduler=scheduler)
+        model, loaders, optimizer, cfg['train']['epochs'], device, scheduler=scheduler,
+        label_smoothing=cfg['train'].get('label_smoothing', 0.0), mix_cfg=cfg['train'].get('mix'),
+        num_classes=len(classes))
 
     # The test set is deliberately NOT evaluated here; use evaluate.py on the final model only.
     out_dir = Path('runs') / cfg['name']
