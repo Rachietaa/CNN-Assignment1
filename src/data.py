@@ -17,6 +17,9 @@ def build_transform(cfg, train):
     t = []
     if cfg.get('grayscale', False):
         t.append(transforms.Grayscale(num_output_channels=1))
+    elif cfg.get('gray3', False):
+        # Gray copied into 3 channels: fits 3-channel pretrained models without the Flower color shortcut.
+        t.append(transforms.Grayscale(num_output_channels=3))
     elif cfg.get('strip_color', False) and not train:
         # Analysis only: remove color but keep 3 channels, to test whether an RGB model relies on color.
         t.append(transforms.Grayscale(num_output_channels=3))
