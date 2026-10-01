@@ -18,6 +18,7 @@ The test set is only evaluated once, on the final selected model.
 |---|---|---|---|---|---:|---|
 | 0 | Baseline | `configs/baseline.yaml` | Starter TNet, grayscale 64×64, Adam 2e-3, 20 epochs | Sanity check / reference point | 48.1% | Heavy overfitting: train acc 99% vs val 47%; val loss rises after epoch 7. Weakest classes: InsideCity, Kitchen (20%), Industrial (31%). |
 | 1 | Deeper CNN | `configs/step1_deeper_cnn.yaml` | 4 conv blocks (8 conv layers) + BatchNorm + global avg pool + dropout 0.3; training unchanged | One 3×3 layer can't see objects or layout | 70.8% | +22.7 pts. Val acc very unstable (53–71% from epoch 6 on; last-5-epoch mean 65.6%). Still overfits (train 97%). Indoor classes still weakest. |
+| 2a | + Cosine LR | `configs/step2a_cosine.yaml` | LR decays from 0.002 to 0 over the run (cosine), stepped every batch | Step 1's val acc jumped ±15 pts between epochs | 77.3% | +6.5 pts best, +11.1 pts last-5 mean (65.6 → 76.8%). Val curve now smooth; last 5 epochs within 76.5–77.3%. Overfitting gap still large (train 99%). |
 
 ---
 
@@ -250,3 +251,110 @@ image rather than in a position-specific linear layer.
 - **Add a learning-rate schedule** (e.g. cosine decay), so the weights settle at the end of training
   instead of jumping around. This should make validation accuracy more stable and the best-epoch number
   more trustworthy. Since it is a separate change from augmentation, it should be tested on its own.
+
+---
+
+## Step 2a — Cosine learning-rate schedule
+
+**Question.** In Step 1, validation accuracy jumped by up to 15 points between consecutive epochs, so the
+"best epoch" (70.8%) was partly luck. Our hypothesis: with a constant learning rate of 0.002 the weights
+never settle, they keep bouncing around a good solution. Does decaying the learning rate fix this?
+
+**Controlled change.** Only the learning-rate schedule changed. Architecture, data, optimizer, initial LR,
+batch size, epochs, seed and split are identical to Step 1 (the two config files differ by one line).
+
+**Reproduce.**
+```bash
+python train.py --config configs/step2a_cosine.yaml
+python evaluate.py --checkpoint runs/step2a_cosine/best.pt
+```
+
+### What cosine decay does
+
+The learning rate starts at 0.002 and follows half a cosine curve down to 0 by the last batch:
+`lr(t) = 0.002 · ½ · (1 + cos(π · t / T))`, where `t` is the current batch and `T` = 20 epochs × 30
+batches = 600 batches. It is updated after every batch (code: `build_scheduler` in
+[src/engine.py](src/engine.py)). Early epochs keep a high LR to learn quickly; late epochs take very small
+steps so the model settles into a minimum instead of jumping around it.
+
+LR at the start of each epoch (also saved in `history.json`):
+
+| Epoch | 1 | 5 | 10 | 11 | 15 | 18 | 20 |
+|---|---|---|---|---|---|---|---|
+| LR | 0.00200 | 0.00181 | 0.00116 | 0.00100 | 0.00041 | 0.00011 | 0.00001 |
+
+### Result
+
+- Best epoch **19**: **371 / 480 correct = 77.3%** validation accuracy (Step 1: 340 / 480 = 70.8%).
+- **+6.5 points** at the best epoch, and **+11.1 points** on the more honest last-5-epoch mean
+  (Step 1: 65.6% → Step 2a: 76.8%). Training time unchanged (30.6 s).
+
+| Epoch | Train loss | Train acc | Val loss | Val acc |
+|---:|---:|---:|---:|---:|
+| 1 | 2.423 | 19.0% | 2.688 | 14.8% |
+| 4 | 1.286 | 56.7% | 1.330 | 54.4% |
+| 7 | 0.768 | 75.0% | 0.999 | 67.5% |
+| 10 | 0.503 | 83.7% | 0.937 | 66.9% |
+| 12 | 0.328 | 90.3% | 0.859 | 71.7% |
+| 14 | 0.218 | 94.6% | 0.797 | 73.3% |
+| 16 | 0.136 | 97.7% | 0.753 | 76.9% |
+| **19** | 0.100 | 98.8% | 0.712 | **77.3%** (best) |
+| 20 | 0.100 | 99.0% | **0.709** (lowest) | 76.7% |
+
+![Step 2a curves](runs/step2a_cosine/curves.png)
+
+**Stability, Step 1 vs Step 2a** (validation accuracy, epochs 6–20):
+
+| | Step 1 (constant LR) | Step 2a (cosine) |
+|---|---:|---:|
+| Range, epochs 6–20 | 52.7% – 70.8% | 59.8% – 77.3% |
+| Range, last 5 epochs | 58.3% – 70.8% | 76.5% – 77.3% |
+| Mean, last 5 epochs | 65.6% | 76.8% |
+| Lowest val loss | 0.942 | 0.709 |
+
+### Per-class validation accuracy (best checkpoint)
+
+Each val class has only 24–39 images, so one image is worth ~3 points. Changes of under ~7 points
+(1–2 images) should be treated as noise.
+
+| Class | Step 1 | Step 2a | Change | Most confused with (Step 2a) |
+|---|---:|---:|---:|---|
+| Bedroom | 46.2% | 53.8% (21/39) | +7.7 | LivingRoom (14) |
+| LivingRoom | 69.2% | 57.7% (15/26) | −11.5 | Kitchen (4) |
+| Industrial | 58.6% | 62.1% (18/29) | +3.4 | Store (4) |
+| OpenCountry | 64.3% | 71.4% (20/28) | +7.1 | Coast (3) |
+| Kitchen | 50.0% | 73.3% (22/30) | +23.3 | LivingRoom (5) |
+| Highway | 75.0% | 75.0% (21/28) | 0.0 | Coast (3) |
+| Coast | 69.7% | 75.8% (25/33) | +6.1 | OpenCountry (7) |
+| InsideCity | 53.3% | 76.7% (23/30) | +23.3 | Industrial (3) |
+| Office | 83.3% | 79.2% (19/24) | −4.2 | LivingRoom (2) |
+| Store | 80.6% | 80.6% (25/31) | 0.0 | InsideCity (2) |
+| Forest | 89.7% | 82.8% (24/29) | −6.9 | Flower (2) |
+| TallBuilding | 75.0% | 85.7% (24/28) | +10.7 | Industrial (2) |
+| Street | 62.5% | 87.5% (28/32) | +25.0 | Bedroom (1) |
+| Mountain | 89.3% | 89.3% (25/28) | 0.0 | Flower (1) |
+| Flower | 80.6% | 90.3% (28/31) | +9.7 | Bedroom (1) |
+| Suburb | 94.1% | 97.1% (33/34) | +2.9 | InsideCity (1) |
+
+### Observations
+
+1. **The hypothesis held: the instability came from the constant LR.** In the last 5 epochs, validation
+   accuracy now stays within 0.8 points (76.5–77.3%), compared with a 12.5-point range in Step 1. The
+   best-epoch number is no longer a lucky spike; it is close to where training actually ends.
+2. **Better, not just more stable.** The last-5 mean rose 11.1 points and validation loss fell from 0.94
+   to 0.71. Small final steps let the model settle in a better minimum than constant-LR training reached.
+3. **Overfitting is now the clear bottleneck.** Training accuracy reaches 99.0% (loss 0.10) while
+   validation is 77%. With a stable optimizer the remaining 22-point gap is a generalization problem,
+   not an optimization one: the model has memorized the 1,920 training images.
+4. **Step 1's two biggest regressions recovered.** Street went from 62.5% back to 87.5%, and
+   InsideCity/Kitchen each gained 23 points. Part of Step 1's per-class picture was noise from evaluating
+   an unsettled model.
+5. **Bedroom vs LivingRoom is still the hardest pair.** Bedroom is mistaken for LivingRoom 14 times
+   (21 correct). LivingRoom dropping to 57.7% is 3 images, within noise, but the two classes clearly
+   share features the model can't separate at 64×64 grayscale.
+
+### What this suggests for the next step
+
+Keep the cosine schedule from now on. The model now fits the training set almost perfectly while
+validation stays at 77%, so the next lever is **data augmentation (Step 2b)**: show the network a
+different random variant of each image every epoch so it cannot simply memorize them.

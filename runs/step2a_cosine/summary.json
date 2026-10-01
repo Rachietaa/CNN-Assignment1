@@ -1,0 +1,9 @@
+{
+  "name": "step2a_cosine",
+  "best_val_acc": 0.7729166666666667,
+  "best_epoch": 19,
+  "params": 1176752,
+  "train_seconds": 30.6,
+  "device": "mps",
+  "torch": "2.14.1"
+}
