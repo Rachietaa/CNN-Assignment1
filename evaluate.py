@@ -20,6 +20,8 @@ def main():
     parser.add_argument('--checkpoint', required=True)
     parser.add_argument('--split', choices=['val', 'test'], default='val')
     parser.add_argument('--data-root', help='override data.root stored in the checkpoint')
+    parser.add_argument('--strip-color', action='store_true',
+                        help='analysis: convert eval images to gray (3 channels) for an RGB model')
     args = parser.parse_args()
 
     device = get_device()
@@ -27,6 +29,8 @@ def main():
     cfg = ckpt['config']
     if args.data_root:
         cfg['data']['root'] = args.data_root
+    if args.strip_color:
+        cfg['data']['strip_color'] = True
 
     loaders, classes = build_loaders(cfg, device)
     model = build_model(cfg, num_classes=len(classes))
@@ -42,7 +46,8 @@ def main():
     for name, acc in sorted(zip(classes, per_class), key=lambda x: x[1]):
         print(f'  {name:<20s} {acc:.3f}')
 
-    out = Path(args.checkpoint).parent / f'eval_{args.split}.json'
+    suffix = '_nocolor' if args.strip_color else ''
+    out = Path(args.checkpoint).parent / f'eval_{args.split}{suffix}.json'
     out.write_text(json.dumps({'split': args.split, 'loss': result['loss'], 'acc': result['acc'],
                                'per_class': dict(zip(classes, per_class)),
                                'confusion': confusion.tolist()}, indent=2))

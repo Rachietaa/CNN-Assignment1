@@ -17,6 +17,9 @@ def build_transform(cfg, train):
     t = []
     if cfg.get('grayscale', False):
         t.append(transforms.Grayscale(num_output_channels=1))
+    elif cfg.get('strip_color', False) and not train:
+        # Analysis only: remove color but keep 3 channels, to test whether an RGB model relies on color.
+        t.append(transforms.Grayscale(num_output_channels=3))
 
     if aug.get('rotation'):
         # Rotate at full resolution with bilinear interpolation (rotating after the 64px resize with
