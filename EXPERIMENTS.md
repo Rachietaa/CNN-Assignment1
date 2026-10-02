@@ -27,7 +27,8 @@ Best configuration at each stage (validation accuracy; mean of 3 seeds where 3 s
 | 4b | ResNet-18, fully fine-tuned | 94.4% | +2.7 |
 | 5a | ConvNeXt-Tiny backbone | 96.8% | +2.7* |
 | 5b | ConvNeXt V2-Tiny (FCMAE pretraining) | 97.2% | +0.3 |
-| 5c-ii | + Label smoothing + Mixup/CutMix | **97.5%** | +0.3 |
+| 5c-ii | + Label smoothing + Mixup/CutMix | 97.5% | +0.3 |
+| 5e | Ensemble of the 3 seeds of 5c-ii (**final model**) | **97.7%** | +0.2 |
 
 \*Compared with the ResNet-18 control on the same A100 (94.1%). Gains from 5b onward are within seed noise.
 
@@ -58,6 +59,7 @@ Flower-only shortcut), a 4× wider network (3c), label smoothing alone (5c-i), f
 | 5c-i | + Label smoothing | `configs/step5c1_label_smoothing.yaml` | 5b + label smoothing 0.1; 3 seeds | Less over-confidence on look-alike classes | 96.9% ± 0.2 | No gain (−0.3, noise). |
 | 5c-ii | + LS + Mixup/CutMix | `configs/step5c2_ls_mix.yaml` | 5b + LS 0.1 + Mixup(α 0.2)/CutMix(α 1.0) on 50% of batches; 3 seeds | Blend images/labels to regularize confused pairs | **97.5% ± 0.8** | Best mean and best single run (98.3%), but seeds vary 96.7–98.3%. OpenCountry +6, Forest −5. |
 | 5d | Horizontal-flip TTA | `evaluate.py --tta` on every Step 5 run | Average predictions of image + mirror | Free test-time gain? | — | **Slightly hurts** every ConvNeXt (−0.1 to −0.4); the models are already flip-invariant from training. |
+| 5e | Ensemble of 5c-ii seeds | `ensemble.py` | Average predicted probabilities of the 3 seeds of 5c-ii | Seeds vary 96.7–98.3%; avoid relying on one lucky seed | **97.7%** | +0.2 over the average seed (97.5%), −0.6 below the best seed. **Chosen as final model.** |
 
 ---
 
@@ -1163,3 +1165,77 @@ used in the final system.
 Use **ConvNeXt V2-Tiny + label smoothing + Mixup/CutMix (5c-ii)**: the highest mean validation accuracy.
 Because its seeds vary by 1.7 points, the final model should not be a single hand-picked seed. Step 5e
 tests whether averaging the 3 seeds' predictions (an ensemble) gives a better and more reliable model.
+
+---
+
+## Step 5e — Ensemble of the 3 seeds, and choice of the final model
+
+**Question.** The best recipe (5c-ii) gives 96.7%, 98.3% and 97.5% on validation depending only on the
+random seed. Which model should be the final one? Picking the best seed means trusting a number that was
+selected *because* it was highest on the same 480 validation images, so it is likely optimistic. An
+ensemble averages the predicted class probabilities of all three models, which should be at least as good
+as a typical single model and less dependent on luck.
+
+**Method.** `ensemble.py` loads the three 5c-ii checkpoints, runs each on the validation images, averages
+their softmax probabilities and takes the most likely class. Each member is also re-scored individually.
+No training is involved.
+
+```bash
+python ensemble.py --out runs/step5e_ensemble \
+    --checkpoints runs/step5c2_ls_mix/best.pt runs/step5c2_ls_mix_s1/best.pt runs/step5c2_ls_mix_s2/best.pt
+```
+
+The checkpoints were trained on the Colab A100 and evaluated here on the Mac (MPS); every member reproduced
+its Colab validation accuracy exactly, so the results do not depend on hardware.
+
+### Result (validation)
+
+| Model | Val acc | Errors / 480 |
+|---|---:|---:|
+| 5c-ii seed 0 | 96.7% | 16 |
+| 5c-ii seed 1 | 98.3% | 8 |
+| 5c-ii seed 2 | 97.5% | 12 |
+| Mean of the single models | 97.5% | 12 |
+| **Ensemble of the 3 seeds** | **97.7%** | **11** |
+
+Validation loss of the ensemble: 0.178.
+
+**Per-class accuracy for the classes where any model makes mistakes** (all others are 100%):
+
+| Class | Seed 0 | Seed 1 | Seed 2 | Ensemble |
+|---|---:|---:|---:|---:|
+| LivingRoom | 92.3% | 96.2% | 96.2% | 92.3% |
+| Forest | 89.7% | 93.1% | 96.6% | 93.1% |
+| InsideCity | 86.7% | 96.7% | 90.0% | 93.3% |
+| Bedroom | 94.9% | 97.4% | 89.7% | 94.9% |
+| Highway | 96.4% | 96.4% | 96.4% | 96.4% |
+| OpenCountry | 96.4% | 96.4% | 96.4% | 96.4% |
+| Store | 96.8% | 96.8% | 96.8% | 96.8% |
+| Coast | 93.9% | 100.0% | 100.0% | 100.0% |
+
+The ensemble's 11 errors: Bedroom→LivingRoom (2) and one each of Forest→Mountain, Forest→OpenCountry,
+Highway→InsideCity, InsideCity→Industrial, InsideCity→Street, LivingRoom→Bedroom, LivingRoom→Kitchen,
+OpenCountry→Mountain, Store→Kitchen. No error pattern dominates any more; they are spread over the
+semantically close scene pairs.
+
+### Observations
+
+1. **The ensemble is better than the typical model (+0.2 points) but not better than the best seed
+   (−0.6).** Where the seeds disagree, the ensemble usually lands between them (InsideCity, Bedroom, Forest),
+   and for LivingRoom it matches the worst seed. Averaging smooths out unlucky seeds, but also the lucky one.
+2. **Ensembling removes the "which seed?" question.** With a 1.7-point spread between seeds, any single
+   seed's validation score is partly luck. The ensemble's score depends on all three models, so it is the
+   more trustworthy estimate of how the recipe will do on new images.
+3. Cost: three 27.9M-parameter models (≈330 MB of checkpoints) and 3× the prediction time.
+
+### Decision (made by the author)
+
+Two candidates were considered for the final model:
+
+- **Single best seed (seed 1):** 98.3% validation, 1× cost. But it was selected as the maximum of three runs
+  on the same validation set, so 98.3% is likely an optimistic estimate.
+- **Ensemble of the 3 seeds:** 97.7% validation, 3× cost, no dependence on picking a lucky seed.
+
+**I chose the ensemble** as the final model, because its validation score is the more reliable estimate of
+real performance and it does not rely on one fortunate random seed. This choice was fixed **before** the
+test set was used. The test set is evaluated once, on this ensemble only (Step 6).
