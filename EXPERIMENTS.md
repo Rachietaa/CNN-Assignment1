@@ -29,6 +29,7 @@ Best configuration at each stage (validation accuracy; mean of 3 seeds where 3 s
 | 5b | ConvNeXt V2-Tiny (FCMAE pretraining) | 97.2% | +0.3 |
 | 5c-ii | + Label smoothing + Mixup/CutMix | 97.5% | +0.3 |
 | 5e | Ensemble of the 3 seeds of 5c-ii (**final model**) | **97.7%** | +0.2 |
+| **6** | **Final model on the test set (evaluated once)** | **Test: 95.75%** | — |
 
 \*Compared with the ResNet-18 control on the same A100 (94.1%). Gains from 5b onward are within seed noise.
 
@@ -60,6 +61,7 @@ Flower-only shortcut), a 4× wider network (3c), label smoothing alone (5c-i), f
 | 5c-ii | + LS + Mixup/CutMix | `configs/step5c2_ls_mix.yaml` | 5b + LS 0.1 + Mixup(α 0.2)/CutMix(α 1.0) on 50% of batches; 3 seeds | Blend images/labels to regularize confused pairs | **97.5% ± 0.8** | Best mean and best single run (98.3%), but seeds vary 96.7–98.3%. OpenCountry +6, Forest −5. |
 | 5d | Horizontal-flip TTA | `evaluate.py --tta` on every Step 5 run | Average predictions of image + mirror | Free test-time gain? | — | **Slightly hurts** every ConvNeXt (−0.1 to −0.4); the models are already flip-invariant from training. |
 | 5e | Ensemble of 5c-ii seeds | `ensemble.py` | Average predicted probabilities of the 3 seeds of 5c-ii | Seeds vary 96.7–98.3%; avoid relying on one lucky seed | **97.7%** | +0.2 over the average seed (97.5%), −0.6 below the best seed. **Chosen as final model.** |
+| 6 | Final test (once) | `ensemble.py --split test` | The 5e ensemble evaluated on the 400 test images | Official result | **Test 95.75%** (383/400) | 2 pts below val. 10 of 17 errors: Mountain/Forest → OpenCountry (gentle wooded hillsides, meadows). |
 
 ---
 
@@ -1239,3 +1241,90 @@ Two candidates were considered for the final model:
 **I chose the ensemble** as the final model, because its validation score is the more reliable estimate of
 real performance and it does not rely on one fortunate random seed. This choice was fixed **before** the
 test set was used. The test set is evaluated once, on this ensemble only (Step 6).
+
+---
+
+## Step 6 — Final test evaluation (run once)
+
+**Final model** (fixed in Step 5e, before the test set was used): an ensemble that averages the
+predicted probabilities of the three Step 5c-ii models (ConvNeXt V2-Tiny, FCMAE + ImageNet-1k pretrained,
+fine-tuned at 224px on gray→3ch input with label smoothing 0.1 and Mixup/CutMix; seeds 0, 1, 2).
+
+```bash
+python ensemble.py --split test --out runs/final_ensemble \
+    --checkpoints runs/step5c2_ls_mix/best.pt runs/step5c2_ls_mix_s1/best.pt runs/step5c2_ls_mix_s2/best.pt
+```
+
+This was the first and only evaluation of any model on the real test set.
+
+### Result
+
+| | Validation (480 images) | **Test (400 images, 25 per class)** |
+|---|---:|---:|
+| **Final ensemble** | 97.7% (11 errors) | **95.75% (17 errors)** |
+| Member: seed 0 | 96.7% | 95.0% |
+| Member: seed 1 (best on validation) | 98.3% | 95.75% |
+| Member: seed 2 | 97.5% | 95.75% |
+
+Test loss of the ensemble: 0.241. The individual members are listed for analysis only; they were not used
+to choose anything.
+
+**Per-class test accuracy** (25 images per class):
+
+| Class | Val (ensemble) | Test (ensemble) |
+|---|---:|---:|
+| **Mountain** | 100.0% | **76.0%** (19/25) |
+| **Forest** | 93.1% | **84.0%** (21/25) |
+| InsideCity | 93.3% | 92.0% (23/25) |
+| Bedroom | 94.9% | 96.0% (24/25) |
+| Coast | 100.0% | 96.0% (24/25) |
+| Kitchen | 100.0% | 96.0% (24/25) |
+| OpenCountry | 96.4% | 96.0% (24/25) |
+| TallBuilding | 100.0% | 96.0% (24/25) |
+| Flower, Highway, Industrial, LivingRoom, Office, Store, Street, Suburb | 92–100% | **100.0%** each |
+
+**Test errors (true → predicted):** Mountain → OpenCountry **6**, Forest → OpenCountry **4**, and one each
+of Bedroom → LivingRoom, Coast → OpenCountry, OpenCountry → Coast, InsideCity → Industrial,
+InsideCity → Street, Kitchen → Store, TallBuilding → Industrial.
+
+All 17 misclassified test images (`python show_errors.py --split test ...`):
+
+![Misclassified test images](runs/final_ensemble/test_errors.png)
+
+### Failure analysis: why is test 2 points below validation?
+
+**1. Most of the gap is one specific weakness.** 10 of the 17 errors are natural landscapes (Mountain,
+Forest) predicted as OpenCountry. Looking at the images:
+- The misclassified **Forest** images are mostly meadows, a stream and grassland with trees in the
+  background (one shows a tent in a flower field). They look closer to open country than to the dense
+  woodland typical of the Forest class: the labels are genuinely ambiguous.
+- The misclassified **Mountain** images are gentle, tree-covered hillsides and valleys rather than rocky
+  peaks. They are visually similar to each other and have neighbouring file numbers (image_0075–0093),
+  suggesting one photo series from the same kind of place that is under-represented in training.
+- This is the weakness already visible on validation in Step 5c-ii, where Mixup/CutMix increased Forest
+  errors (2 → 6) while fixing Coast/OpenCountry. The final model inherited it, and the test set happens to
+  contain more of these borderline natural scenes than the validation split did.
+
+**2. Validation was somewhat optimistic.** The validation set was used for many decisions (best epoch in
+every run, and the choice among ~20 configurations), so its accuracy is biased slightly upwards. The
+clearest evidence: seed 1, the best model on validation (98.3%), scores exactly the same on test as the
+ensemble (95.75%); its validation lead was luck, not a better model. This also confirms the Step 5e
+decision not to rely on the single best seed.
+
+**3. Part of the gap is sampling noise.** With 400 test images, one image is 0.25 points. The test accuracy
+has a standard error of about ±1.0 point (95% interval ≈ 93.8–97.7%), and the val–test difference (1.96
+points) is about 1.6 standard errors of the difference: noticeable, but not extreme.
+
+**What went well.** The indoor classes that were the hardest problem throughout the project generalize
+well: LivingRoom, Office and Store are 100%, Bedroom 96% (one error) on test. Flower is 100% using gray
+input only (no color shortcut, Step 3a).
+
+**What I would do next** (not done, because the test set may not be used for further tuning): collect or
+weight more borderline natural scenes (wooded hillsides, meadows) for training, and check whether
+Mixup/CutMix should be applied less aggressively to the natural-scene classes, which is where it hurt on
+validation too.
+
+### Final answer
+
+**Test accuracy: 95.75%** (383 / 400) with a 3-model ConvNeXt V2-Tiny ensemble; validation accuracy of the
+same model: 97.7%. Starting point: the starter TNet baseline at 48.1% validation accuracy.
