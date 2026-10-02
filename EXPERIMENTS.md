@@ -1,7 +1,34 @@
 # Experiment Log
 
-All numbers are on the fixed 20% validation split (seed 0, 480 images).
-The test set is only evaluated once, on the final selected model.
+This log records how the scene classifier went from **48.1%** (starter model) to **97.7%** validation
+accuracy and **95.75%** test accuracy, one experiment at a time, including what did not work.
+
+## How to read this log
+
+- **Goal:** sort photos into 16 scene types (Bedroom, Coast, Forest, Kitchen, ...).
+- **Data:** the 2,400 labelled training photos are split once into **1,920 for training** and **480 for
+  validation**. The model learns from the training photos; the validation photos are used to compare
+  experiments. A separate **test set of 400 photos** was used only once, at the very end (Step 6).
+- **One change at a time:** each step changes one thing compared with the previous best setup, so any
+  difference in accuracy can be traced to that change.
+- **Start here:** "Progress at a glance" gives the whole story in one table; the step sections below give
+  the details.
+
+**Terms used**
+
+| Term | Meaning |
+|---|---|
+| Validation accuracy | % of the 480 validation photos classified correctly. All numbers are validation accuracy unless marked "test". |
+| Epoch | One pass over all training photos. |
+| Seed | The random starting point of a training run. Re-running with different seeds shows how much a result changes by chance; "97.5% ± 0.8" means mean ± standard deviation over 3 seeds. |
+| Overfitting | The model memorizes the training photos (high train accuracy) but does worse on new photos. |
+| Augmentation | Random small changes to training photos (crop, flip, rotate, brightness) so the model sees more variety. |
+| Pretrained | The network starts from weights already learned on ImageNet (1.28M photos) instead of from random weights. |
+| Fine-tuning | Continuing to train those pretrained weights on our photos. |
+| Learning-rate schedule (cosine) | The size of the training steps shrinks smoothly towards zero during training. |
+| Label smoothing / Mixup / CutMix | Training tricks that discourage over-confident predictions; Mixup blends two photos, CutMix pastes a patch of one photo into another. |
+| TTA (test-time augmentation) | Predicting on a photo and its mirror image and averaging the two predictions. |
+| Ensemble | Averaging the predictions of several trained models. |
 
 ## Dataset notes
 
@@ -511,7 +538,7 @@ Reminder: one image ≈ 3 points per class; changes under ~7 points are within n
    (0.71 → 0.84): the extra epochs are spent memorizing harder.
 3. **Together they work: 82.7%, +5.4 over Step 2a**, and +4.1 over the equally long control. Augmentation
    prevents memorization; the extra epochs give the model time to learn from the harder, more varied data.
-   This is an interaction effect, invisible if you change one thing at a time with fixed epochs.
+   This is an interaction effect: it stays hidden if only one thing is changed at a time with fixed epochs.
 4. **Best generalization so far by validation loss** (0.55 vs 0.71 for 2a and 0.84 for the control). The
    model is both more accurate and less over-confident on images it gets wrong.
 5. **The Bedroom/LivingRoom confusion shrank a lot**: Bedroom → LivingRoom errors dropped from 14 to 5,
@@ -720,7 +747,7 @@ fits the training set worse (train accuracy 90–92% vs 98%) and is less confide
    upright. Training on tilted/upside-down versions forces the network to spend capacity becoming
    invariant to orientation, a variation it will never see, while erasing a cue that genuinely separates
    classes. Satellite and microscope images have no "up", which is why the same augmentation helps there.
-2. **The two augmentations destroy different cues, and the per-class results show which.** My prediction
+2. **The two augmentations destroy different cues, and the per-class results show which.** The prediction
    ("outdoor classes suffer") was only partly right:
    - **Large rotation** hurts most on **man-made scenes defined by straight vertical and horizontal
      lines**: Industrial −15, InsideCity −13, Store −12 (shelves, building edges, walls). Rotation tilts
@@ -734,7 +761,7 @@ fits the training set worse (train accuracy 90–92% vs 98%) and is less confide
 3. **Flower is the exception that confirms the explanation.** Flower images are close-ups of petals with
    no meaningful "up", and Flower is the only class that clearly *improves* (+9.7 with rotation, +4.3 with
    flips). Orientation augmentation helps exactly where orientation carries no information. Forest, which
-   I expected to behave like Flower, dropped 4.6 points: forest photos still have tree trunks that are
+   was expected to behave like Flower, dropped 4.6 points: forest photos still have tree trunks that are
    vertical and a canopy on top.
 4. **Caveat for the rotation result.** At ±45° the rotated images contain larger gray corners than the
    crop can remove, so part of the drop could come from these artifacts rather than from the tilt itself.
@@ -838,7 +865,7 @@ are unchanged, as expected, because their input is identical with or without str
    model also overfits less.
 2. **The gains are in classes defined by fine detail**: Flower +12.9 (petal texture), Kitchen +7.8
    (appliances, cabinets), OpenCountry +6.0, Street +5.2, Highway +4.8 (lane markings, small vehicles).
-3. **It did not fix the indoor confusions I expected it to fix.** Bedroom (−5.1) and LivingRoom (−2.6) did
+3. **It did not fix the indoor confusions it was expected to fix.** Bedroom (−5.1) and LivingRoom (−2.6) did
    not improve; their errors come from similar furniture layouts, not from missing pixels. One likely
    limit: with the same 4 blocks, each unit now sees a smaller fraction of the 128px image, so the network
    gained detail but lost some global layout context.
@@ -912,7 +939,7 @@ Code: `PretrainedResNet18` in [src/models.py](src/models.py).
 | Schedule | cosine | **1–2 epoch linear warm-up**, then cosine | Early gradients come from a random final layer; warm-up keeps them from damaging the pretrained weights |
 | Epochs | 60 | **30** | Pretrained models converge much faster |
 
-Before training, I checked that the code does what the table says: 4a has 8,208 trainable parameters out
+Before training, the code was checked to do what the table says: 4a has 8,208 trainable parameters out
 of 11.2M and all its BatchNorm layers stay in eval mode; 4b has two optimizer groups (8,208 head
 parameters at 1e-3, 11.18M backbone parameters at 1e-4); the LR ramps up during warm-up and then decays.
 
@@ -1230,7 +1257,7 @@ semantically close scene pairs.
    more trustworthy estimate of how the recipe will do on new images.
 3. Cost: three 27.9M-parameter models (≈330 MB of checkpoints) and 3× the prediction time.
 
-### Decision (made by the author)
+### Decision
 
 Two candidates were considered for the final model:
 
@@ -1238,8 +1265,8 @@ Two candidates were considered for the final model:
   on the same validation set, so 98.3% is likely an optimistic estimate.
 - **Ensemble of the 3 seeds:** 97.7% validation, 3× cost, no dependence on picking a lucky seed.
 
-**I chose the ensemble** as the final model, because its validation score is the more reliable estimate of
-real performance and it does not rely on one fortunate random seed. This choice was fixed **before** the
+**The ensemble was chosen** as the final model, because its validation score is the more reliable estimate
+of real performance and it does not rely on one fortunate random seed. This choice was fixed **before** the
 test set was used. The test set is evaluated once, on this ensemble only (Step 6).
 
 ---
@@ -1319,7 +1346,7 @@ points) is about 1.6 standard errors of the difference: noticeable, but not extr
 well: LivingRoom, Office and Store are 100%, Bedroom 96% (one error) on test. Flower is 100% using gray
 input only (no color shortcut, Step 3a).
 
-**What I would do next** (not done, because the test set may not be used for further tuning): collect or
+**Possible next steps** (not done, because the test set may not be used for further tuning): collect or
 weight more borderline natural scenes (wooded hillsides, meadows) for training, and check whether
 Mixup/CutMix should be applied less aggressively to the natural-scene classes, which is where it hurt on
 validation too.
