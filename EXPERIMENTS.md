@@ -1008,9 +1008,23 @@ machine throttled; accuracy is unaffected, only wall-clock time.
 modern CNN improve further, and do standard fine-tuning tricks fix the remaining confusions
 (Bedroom↔LivingRoom, Coast↔OpenCountry, InsideCity↔Street)?
 
-All Step 5 runs used the same recipe as Step 4b (224px, gray→3ch, Step 2b-ii augmentation, AdamW with
-head LR 1e-3 / backbone LR 1e-4, weight decay 0.05, 2-epoch warm-up + cosine, 30 epochs, batch 64) and
-3 seeds each on the fixed validation split. Only the listed change differs between experiments.
+### Setup
+
+Every Step 5 run keeps the Step 4b recipe; only the listed change differs between experiments. 3 seeds
+each, same fixed validation split.
+
+| Setting | Value (all Step 5 runs) | Changed in |
+|---|---|---|
+| Input | 224×224, gray copied into 3 channels, ImageNet mean/std | — |
+| Augmentation (train only) | rotation ±10°, random resized crop 70–100%, horizontal flip, brightness/contrast ±20% | — |
+| Backbone | ResNet-18 (control) → **ConvNeXt-Tiny** → **ConvNeXt V2-Tiny** | 5a, 5b |
+| Stochastic depth (drop-path) | 0.1 for both ConvNeXt models | — |
+| Optimizer | AdamW, weight decay 0.05; LR 1e-3 for the new head, 1e-4 for pretrained layers | — |
+| Schedule | 2-epoch linear warm-up, then cosine decay to 0; 30 epochs, batch 64 | — |
+| Loss | cross-entropy → **+ label smoothing 0.1** | 5c-i, 5c-ii |
+| Batch mixing | none → **Mixup (α 0.2) or CutMix (α 1.0), chosen at random, on 50% of batches** | 5c-ii |
+| Evaluation | best-validation-accuracy epoch; also with **horizontal-flip TTA** | 5d |
+| Hardware | Google Colab, NVIDIA A100 40 GB (CUDA), PyTorch 2.11, timm 1.0.29 | — |
 
 ### Hardware change and control
 
@@ -1054,6 +1068,20 @@ Both are pure CNNs (no attention). Stochastic depth (drop-path) 0.1 was set iden
 \*Label smoothing raises the minimum achievable loss (targets are 0.9/0.006 instead of 1/0), so val loss
 is not comparable between runs with and without it.
 
+**Learning curves (seed 0, train acc / val acc, %):**
+
+| Run | Ep 1 | 2 | 3 | 5 | 10 | 15 | 20 | 25 | 30 |
+|---|---|---|---|---|---|---|---|---|---|
+| Control (ResNet-18) | 29 / 70 | 83 / 85 | 92 / 90 | 97 / 92 | 99 / 92 | 100 / 93 | 100 / 94 | 100 / 93 | 100 / 93 |
+| 5a ConvNeXt-Tiny | 44 / 88 | 92 / 94 | 96 / 96 | 99 / 95 | 100 / 94 | 100 / 94 | 100 / 95 | 100 / 96 | 100 / 97 |
+| 5b ConvNeXt V2-Tiny | 41 / 83 | 90 / 94 | 96 / 94 | 99 / 95 | 100 / 96 | 100 / 95 | 100 / 98 | 100 / 98 | 100 / 98 |
+| 5c-i + LS | 42 / 83 | 91 / 94 | 96 / 94 | 99 / 96 | 100 / 96 | 100 / 96 | 100 / 96 | 100 / 97 | 100 / 97 |
+| 5c-ii + LS + mix | 34 / 82 | 78 / 94 | 83 / 95 | 79 / 96 | 80 / 95 | 76 / 95 | 85 / 96 | 70 / 95 | 81 / 96 |
+
+ConvNeXt reaches ~94% validation accuracy after only **2 epochs** (ResNet-18 needs ~20 to reach the same).
+In 5c-ii, train accuracy stays at 70–85% because it is measured on mixed images whose "true" label is a
+blend of two classes; validation accuracy is the meaningful number there.
+
 ![Step 5c-ii seed 1 curves](runs/step5c2_ls_mix_s1/curves.png)
 
 **Per-class validation accuracy (mean of 3 seeds):**
@@ -1077,9 +1105,21 @@ is not comparable between runs with and without it.
 | Suburb | 98.0% | 100.0% | 100.0% | 100.0% | 100.0% |
 | TallBuilding | 100.0% | 98.8% | 100.0% | 98.8% | 100.0% |
 
-**Most frequent errors** (summed over 3 seeds = 1,440 predictions): 5b made 41 errors in total, led by
-Bedroom→LivingRoom (7), Coast→OpenCountry (4), InsideCity→Street (4). 5c-ii made 36, led by
-Bedroom→LivingRoom (6), InsideCity→Street (6), then Forest→Mountain (3) and Forest→OpenCountry (3).
+**Most frequent errors** (true class → predicted, summed over the 3 seeds = 1,440 validation predictions):
+
+| 5b ConvNeXt V2 (41 errors in total) | Count | 5c-ii + LS + mix (36 errors in total) | Count |
+|---|---:|---|---:|
+| Bedroom → LivingRoom | 7 | Bedroom → LivingRoom | 6 |
+| Coast → OpenCountry | 4 | InsideCity → Street | 6 |
+| InsideCity → Street | 4 | Forest → Mountain | 3 |
+| LivingRoom → Kitchen | 3 | Forest → OpenCountry | 3 |
+| OpenCountry → Mountain | 3 | LivingRoom → Kitchen | 3 |
+| Store → Kitchen | 3 | OpenCountry → Mountain | 3 |
+| OpenCountry → Coast | 3 | Store → Kitchen | 3 |
+| Highway → InsideCity | 2 | Coast → OpenCountry | 2 |
+
+Mixup/CutMix removed most Coast↔OpenCountry confusions (7 → 2) but increased Forest errors (2 → 6, now
+mistaken for Mountain/OpenCountry). Bedroom → LivingRoom remains the single hardest pair throughout.
 
 ### Observations
 
