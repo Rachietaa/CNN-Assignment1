@@ -1,0 +1,43 @@
+# Step 5c-ii: configs/step5b_convnextv2_tiny.yaml + label smoothing 0.1 + Mixup/CutMix (p 0.5).
+name: step5c2_ls_mix
+seed: 0
+data:
+  root: data
+  val_fraction: 0.2
+  img_size: 224
+  gray3: true
+  mean:
+  - 0.485
+  - 0.456
+  - 0.406
+  std:
+  - 0.229
+  - 0.224
+  - 0.225
+  num_workers: 4
+  augment:
+    rotation: 10
+    random_resized_crop:
+    - 0.7
+    - 1.0
+    hflip: 0.5
+    brightness: 0.2
+    contrast: 0.2
+model:
+  name: convnext_tiny
+  version: v2
+  drop_path: 0.1
+train:
+  optimizer: adamw
+  lr: 0.001
+  backbone_lr: 0.0001
+  weight_decay: 0.05
+  batch_size: 64
+  epochs: 30
+  scheduler: cosine
+  warmup_epochs: 2
+  label_smoothing: 0.1
+  mix:
+    p: 0.5
+    mixup_alpha: 0.2
+    cutmix_alpha: 1.0

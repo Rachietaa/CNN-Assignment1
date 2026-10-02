@@ -1,0 +1,37 @@
+# Step 5 control: Step 4b re-run unchanged on the Step 5 hardware (CUDA GPU).
+name: step5_ctrl_resnet18_cuda
+seed: 0
+data:
+  root: data
+  val_fraction: 0.2
+  img_size: 224
+  gray3: true
+  mean:
+  - 0.485
+  - 0.456
+  - 0.406
+  std:
+  - 0.229
+  - 0.224
+  - 0.225
+  num_workers: 4
+  augment:
+    rotation: 10
+    random_resized_crop:
+    - 0.7
+    - 1.0
+    hflip: 0.5
+    brightness: 0.2
+    contrast: 0.2
+model:
+  name: resnet18
+  freeze_backbone: false
+train:
+  optimizer: adamw
+  lr: 0.001
+  backbone_lr: 0.0001
+  weight_decay: 0.05
+  batch_size: 64
+  epochs: 30
+  scheduler: cosine
+  warmup_epochs: 2
