@@ -60,7 +60,6 @@ def main():
 
     model = build_model(cfg, num_classes=len(classes))
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(model)
     print(f'Trainable parameters: {n_params:,}')
 
     optimizer = build_optimizer(cfg, model)
