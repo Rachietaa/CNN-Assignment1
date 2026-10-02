@@ -11,3 +11,7 @@ runs/**/*.pt
 
 # course handout
 *.pdf
+
+# downloaded Colab result bundles (contents copied into runs/ and configs/)
+step5_results/
+step5_results.zip

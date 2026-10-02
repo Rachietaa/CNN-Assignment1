@@ -1,0 +1,9 @@
+{
+  "name": "step5_ctrl_resnet18_cuda_s1",
+  "best_val_acc": 0.9395833333333333,
+  "best_epoch": 23,
+  "params": 11184720,
+  "train_seconds": 136.6,
+  "device": "cuda",
+  "torch": "2.11.0+cu130"
+}

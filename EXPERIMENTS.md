@@ -12,6 +12,28 @@ The test set is only evaluated once, on the final selected model.
 - Image sizes vary (292 distinct sizes); half are 256×256, most others ~220px tall.
 - No duplicate files between train, test and test2 (MD5 check).
 
+## Progress at a glance
+
+Best configuration at each stage (validation accuracy; mean of 3 seeds where 3 seeds were run).
+
+| Step | What changed | Val acc | Gain |
+|---|---|---:|---:|
+| 0 | Starter TNet (1 conv layer, gray 64px) | 48.1% | — |
+| 1 | Deeper CNN (8 conv layers + BatchNorm) | 70.8% | +22.7 |
+| 2a | + Cosine learning-rate decay | 77.3% | +6.5 |
+| 2b-ii | + Augmentation and 60 epochs | 82.8% | +5.5 |
+| 3b | 128px input (best from scratch) | 84.7% | +1.9 |
+| 4a | ImageNet-pretrained ResNet-18, frozen | 91.7% | +7.0 |
+| 4b | ResNet-18, fully fine-tuned | 94.4% | +2.7 |
+| 5a | ConvNeXt-Tiny backbone | 96.8% | +2.7* |
+| 5b | ConvNeXt V2-Tiny (FCMAE pretraining) | 97.2% | +0.3 |
+| 5c-ii | + Label smoothing + Mixup/CutMix | **97.5%** | +0.3 |
+
+\*Compared with the ResNet-18 control on the same A100 (94.1%). Gains from 5b onward are within seed noise.
+
+What did not help: Cutout (2c), large rotation / vertical flip (2d, −2.5 to −4.7), RGB input (3a, a
+Flower-only shortcut), a 4× wider network (3c), label smoothing alone (5c-i), flip TTA (5d).
+
 ## Results summary
 
 | # | Experiment | Config | What changed | Why | Val acc | Observation |
@@ -30,6 +52,12 @@ The test set is only evaluated once, on the final selected model.
 | 3c | 2× wider network | `configs/step3c_wide.yaml` | Channels 64-128-256-512 (4.7M params, 4×); 3 seeds | Is model capacity the limit? | 83.0% ± 0.3 | **No gain** (+0.2) for 4× parameters and 2.7× time. Capacity isn't the bottleneck; the amount of data is. |
 | 4a | Pretrained ResNet-18, frozen | `configs/step4a_resnet18_frozen.yaml` | ImageNet ResNet-18, only new final layer trained (8,208 weights); 224px, gray→3ch, AdamW; 3 seeds | How good are ImageNet features for scenes as-is? | 91.7% ± 0.6 | **+7.0 pts over the best from-scratch model** while training 0.07% of the weights. Flower 100% without color. |
 | 4b | Pretrained ResNet-18, full fine-tune | `configs/step4b_resnet18_finetune.yaml` | All 11.2M weights trained; backbone LR 1e-4, head LR 1e-3, 2-epoch warm-up; 3 seeds | Does adapting the features add more? | **94.4% ± 0.2** | **+2.7 pts over frozen**, most stable result so far. Remaining errors: Bedroom↔LivingRoom, Coast↔OpenCountry, InsideCity↔Industrial/Street. |
+| 5 ctrl | ResNet-18 4b on the A100 | `configs/step5_ctrl_resnet18_cuda.yaml` | Step 4b re-run unchanged on Colab A100 (CUDA); 3 seeds | Step 5 runs on different hardware than Steps 0–4 | 94.1% ± 0.1 | Matches the Mac result (94.4% ± 0.2) within noise → hardware doesn't change results; Step 5 compares against this. |
+| 5a | ConvNeXt-Tiny | `configs/step5a_convnext_tiny.yaml` | ResNet-18 → ConvNeXt-Tiny (28M, supervised ImageNet-1k); recipe unchanged; 3 seeds | Stronger modern CNN backbone | 96.8% ± 0.1 | **+2.7 pts over ResNet-18**, the only clear gain in Step 5. Errors 28 → 15 per seed. |
+| 5b | ConvNeXt V2-Tiny (FCMAE) | `configs/step5b_convnextv2_tiny.yaml` | Same architecture family, FCMAE masked-autoencoder + supervised weights; 3 seeds | Does masked-image pretraining transfer better? | 97.2% ± 0.6 | +0.3 over 5a, **within seed noise** (one seed 96.5%). Lowest val loss of all (0.109). |
+| 5c-i | + Label smoothing | `configs/step5c1_label_smoothing.yaml` | 5b + label smoothing 0.1; 3 seeds | Less over-confidence on look-alike classes | 96.9% ± 0.2 | No gain (−0.3, noise). |
+| 5c-ii | + LS + Mixup/CutMix | `configs/step5c2_ls_mix.yaml` | 5b + LS 0.1 + Mixup(α 0.2)/CutMix(α 1.0) on 50% of batches; 3 seeds | Blend images/labels to regularize confused pairs | **97.5% ± 0.8** | Best mean and best single run (98.3%), but seeds vary 96.7–98.3%. OpenCountry +6, Forest −5. |
+| 5d | Horizontal-flip TTA | `evaluate.py --tta` on every Step 5 run | Average predictions of image + mirror | Free test-time gain? | — | **Slightly hurts** every ConvNeXt (−0.1 to −0.4); the models are already flip-invariant from training. |
 
 ---
 
@@ -971,3 +999,127 @@ machine throttled; accuracy is unaffected, only wall-clock time.
   (masked-autoencoder pretraining for CNNs) before supervised fine-tuning.
 - **Fine-tuning tricks to target the remaining confusions:** label smoothing (less over-confidence on
   similar classes), Mixup/CutMix, and test-time horizontal-flip averaging.
+
+---
+
+## Step 5 — Stronger CNN backbones and fine-tuning tricks (Colab A100)
+
+**Question.** Step 4 showed that better pretrained features were the biggest lever. Does a stronger,
+modern CNN improve further, and do standard fine-tuning tricks fix the remaining confusions
+(Bedroom↔LivingRoom, Coast↔OpenCountry, InsideCity↔Street)?
+
+All Step 5 runs used the same recipe as Step 4b (224px, gray→3ch, Step 2b-ii augmentation, AdamW with
+head LR 1e-3 / backbone LR 1e-4, weight decay 0.05, 2-epoch warm-up + cosine, 30 epochs, batch 64) and
+3 seeds each on the fixed validation split. Only the listed change differs between experiments.
+
+### Hardware change and control
+
+ConvNeXt was ~6× slower per epoch than ResNet-18 on the laptop GPU (Apple MPS, ~70 s/epoch), so Step 5
+ran on a **Google Colab A100 (CUDA)**. Different hardware can shift results slightly, so Step 4b was first
+re-run **unchanged** on the A100 as a control:
+
+| | Mac M5 (MPS), Step 4b | Colab A100 (CUDA), control |
+|---|---:|---:|
+| Best val, 3 seeds | 94.6 / 94.4 / 94.2 | 94.2 / 94.0 / 94.2 |
+| Mean ± std | 94.4% ± 0.2 | 94.1% ± 0.1 |
+| Time per run | ~346 s | ~137 s |
+
+The 0.3-point difference is about 1–2 images and within seed noise: **hardware does not change the
+results**, and every Step 5 model is compared against the A100 control.
+
+**Reproduce:** `python run_step5.py` (runs everything below in order; used via `colab_step5.ipynb`).
+The script picks the better of 5a/5b by mean validation accuracy and builds 5c on top of it.
+Full training log: [runs/step5_log.txt](runs/step5_log.txt).
+
+### What is pretrained
+
+| Model | Weights | Pretraining | Fine-tuned |
+|---|---|---|---|
+| ConvNeXt-Tiny (5a) | torchvision `ConvNeXt_Tiny_Weights.IMAGENET1K_V1` | supervised, ImageNet-1k | all 27.8M parameters (new 768→16 head) |
+| ConvNeXt V2-Tiny (5b, 5c) | timm `convnextv2_tiny.fcmae_ft_in1k` | **FCMAE** (fully convolutional masked autoencoder, self-supervised) on ImageNet-1k, then supervised ImageNet-1k fine-tuning | all 27.9M parameters (new 768→16 head) |
+
+Both are pure CNNs (no attention). Stochastic depth (drop-path) 0.1 was set identically for both, so
+5a vs 5b differs only in architecture details (V2 adds Global Response Normalization) and pretraining.
+
+### Results (validation, 3 seeds each)
+
+| Run | Change | Per seed | **Mean ± std** | Errors / 480 | With flip TTA | Lowest val loss | Time / run |
+|---|---|---|---:|---|---:|---:|---:|
+| Control | ResNet-18 (Step 4b) | 94.2 / 94.0 / 94.2 | 94.1% ± 0.1 | 28 / 29 / 28 | 94.2% | 0.229 | 137 s |
+| **5a** | ConvNeXt-Tiny | 96.7 / 96.9 / 96.9 | **96.8% ± 0.1** | 16 / 15 / 15 | 96.7% | 0.121 | 222 s |
+| **5b** | ConvNeXt V2-Tiny (FCMAE) | 97.5 / 97.5 / 96.5 | **97.2% ± 0.6** | 12 / 12 / 17 | 96.8% | 0.109 | 275 s |
+| **5c-i** | 5b + label smoothing 0.1 | 97.1 / 96.7 / 96.9 | 96.9% ± 0.2 | 14 / 16 / 15 | 96.7% | 0.193* | 275 s |
+| **5c-ii** | 5b + LS 0.1 + Mixup/CutMix | 96.7 / **98.3** / 97.5 | **97.5% ± 0.8** | 16 / **8** / 12 | 97.1% | 0.183* | 286 s |
+
+\*Label smoothing raises the minimum achievable loss (targets are 0.9/0.006 instead of 1/0), so val loss
+is not comparable between runs with and without it.
+
+![Step 5c-ii seed 1 curves](runs/step5c2_ls_mix_s1/curves.png)
+
+**Per-class validation accuracy (mean of 3 seeds):**
+
+| Class | ResNet-18 control | 5a ConvNeXt | 5b ConvNeXt V2 | 5c-i + LS | 5c-ii + LS + mix |
+|---|---:|---:|---:|---:|---:|
+| InsideCity | 84.4% | 93.3% | 93.3% | 93.3% | 91.1% |
+| Forest | 98.9% | 97.7% | 97.7% | 95.4% | 93.1% |
+| Bedroom | 83.8% | 88.9% | 92.3% | 90.6% | 94.0% |
+| LivingRoom | 88.5% | 94.9% | 94.9% | 96.2% | 94.9% |
+| Highway | 96.4% | 96.4% | 96.4% | 96.4% | 96.4% |
+| OpenCountry | 84.5% | 86.9% | 90.5% | 89.3% | 96.4% |
+| Store | 89.2% | 96.8% | 95.7% | 94.6% | 96.8% |
+| Coast | 92.9% | 97.0% | 94.9% | 98.0% | 98.0% |
+| Flower | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% |
+| Industrial | 97.7% | 100.0% | 100.0% | 100.0% | 100.0% |
+| Kitchen | 98.9% | 100.0% | 100.0% | 100.0% | 100.0% |
+| Mountain | 97.6% | 100.0% | 100.0% | 100.0% | 100.0% |
+| Office | 97.2% | 100.0% | 100.0% | 100.0% | 100.0% |
+| Street | 100.0% | 100.0% | 100.0% | 99.0% | 100.0% |
+| Suburb | 98.0% | 100.0% | 100.0% | 100.0% | 100.0% |
+| TallBuilding | 100.0% | 98.8% | 100.0% | 98.8% | 100.0% |
+
+**Most frequent errors** (summed over 3 seeds = 1,440 predictions): 5b made 41 errors in total, led by
+Bedroom→LivingRoom (7), Coast→OpenCountry (4), InsideCity→Street (4). 5c-ii made 36, led by
+Bedroom→LivingRoom (6), InsideCity→Street (6), then Forest→Mountain (3) and Forest→OpenCountry (3).
+
+### Observations
+
+1. **The backbone is the only clear win.** ConvNeXt-Tiny beats ResNet-18 by **+2.7 points** with almost no
+   seed variation (96.8% ± 0.1 vs 94.1% ± 0.1), roughly halving the errors (28 → 15 per seed). Seven
+   classes reach 100%. A stronger ImageNet-pretrained feature extractor matters more than any trick on top.
+2. **FCMAE pretraining (V2) is at least as good as supervised pretraining, but not clearly better.** 5b's
+   mean is 0.3 points higher, but one of its seeds (96.5%) is below every 5a seed. The two are within
+   noise; V2 does reach the lowest validation loss (0.109), i.e. slightly better-calibrated predictions.
+   Answer to "does masked-autoencoder pretraining transfer better to scenes?": not measurably, at this
+   data size.
+3. **Label smoothing alone did nothing** (96.9% vs 97.2%, within noise).
+4. **Mixup/CutMix gives the best mean (97.5%) and the best single run (98.3%, 8 errors), but also the
+   largest seed spread (96.7–98.3%).** It clearly helps OpenCountry (+5.9 over 5b) and Bedroom (+1.7), the
+   look-alike classes it was meant to help, but costs Forest (−4.6): forest images get confused with
+   Mountain/OpenCountry, plausibly because CutMix pastes patches of one natural scene into another and
+   blurs the boundary between them. Best epochs of 24 and 29 for two seeds suggest it might gain from
+   longer training.
+5. **The gains in 5b → 5c-ii are within seed noise.** With a spread of 0.8 points, ranking 5c-ii above 5b
+   is a weak preference, not a proven improvement. Picking the single best seed (98.3%) would overstate
+   expected performance; this motivates Step 5e.
+
+### Step 5d — Horizontal-flip test-time augmentation: no gain
+
+Every Step 5 checkpoint was evaluated twice: normally, and averaging the predicted probabilities of each
+image and its mirror image (`evaluate.py --tta`).
+
+| | Control | 5a | 5b | 5c-i | 5c-ii |
+|---|---:|---:|---:|---:|---:|
+| Without TTA | 94.10% | 96.81% | 97.15% | 96.88% | 97.50% |
+| With flip TTA | 94.17% | 96.74% | 96.81% | 96.74% | 97.08% |
+| Change | +0.07 | −0.07 | −0.34 | −0.14 | −0.42 |
+
+**Flip TTA does not help, and slightly hurts the ConvNeXt models.** Every model was trained with random
+horizontal flips (Step 2b), so it already gives nearly the same prediction for an image and its mirror;
+averaging adds no new information. The small drops (1–2 images) are within noise. TTA is therefore not
+used in the final system.
+
+### Decision
+
+Use **ConvNeXt V2-Tiny + label smoothing + Mixup/CutMix (5c-ii)**: the highest mean validation accuracy.
+Because its seeds vary by 1.7 points, the final model should not be a single hand-picked seed. Step 5e
+tests whether averaging the 3 seeds' predictions (an ensemble) gives a better and more reliable model.

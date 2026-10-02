@@ -1,0 +1,9 @@
+{
+  "name": "step5c2_ls_mix_s2",
+  "best_val_acc": 0.975,
+  "best_epoch": 29,
+  "params": 27878800,
+  "train_seconds": 285.7,
+  "device": "cuda",
+  "torch": "2.11.0+cu130"
+}

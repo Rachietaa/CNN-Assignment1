@@ -1,0 +1,9 @@
+{
+  "name": "step5b_convnextv2_tiny_s2",
+  "best_val_acc": 0.9645833333333333,
+  "best_epoch": 22,
+  "params": 27878800,
+  "train_seconds": 275.0,
+  "device": "cuda",
+  "torch": "2.11.0+cu130"
+}

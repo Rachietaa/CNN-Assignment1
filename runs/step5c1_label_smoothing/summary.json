@@ -1,0 +1,9 @@
+{
+  "name": "step5c1_label_smoothing",
+  "best_val_acc": 0.9708333333333333,
+  "best_epoch": 7,
+  "params": 27878800,
+  "train_seconds": 275.0,
+  "device": "cuda",
+  "torch": "2.11.0+cu130"
+}
